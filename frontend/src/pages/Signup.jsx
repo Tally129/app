@@ -7,25 +7,35 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { ArrowLeft } from "lucide-react";
 import { useToast } from "../hooks/use-toast";
-import { LS_KEYS } from "../mock";
+import { useAuth, roleHome } from "../lib/auth";
 
 export default function Signup() {
   const { toast } = useToast();
   const navigate = useNavigate();
-  const [form, setForm] = React.useState({ name: "", email: "", phone: "", password: "" });
+  const { registerNew } = useAuth();
+  const [form, setForm] = React.useState({ full_name: "", email: "", phone: "", password: "" });
+  const [busy, setBusy] = React.useState(false);
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
-    if (!form.name || !form.email || !form.password) {
-      toast({ title: "Please complete required fields" });
+    if (!form.full_name || !form.email || form.password.length < 8) {
+      toast({ title: "Complete all fields", description: "Password must be at least 8 characters." });
       return;
     }
-    const existing = JSON.parse(localStorage.getItem(LS_KEYS.clients) || "[]");
-    localStorage.setItem(LS_KEYS.clients, JSON.stringify([...existing, { ...form, ts: Date.now() }]));
-    localStorage.setItem(LS_KEYS.session, JSON.stringify({ email: form.email, name: form.name }));
-    toast({ title: "Welcome aboard", description: "Your client account has been created." });
-    navigate("/");
+    setBusy(true);
+    try {
+      const { user } = await registerNew(form);
+      toast({ title: "Welcome aboard", description: "Your client account has been created." });
+      navigate(roleHome(user.role), { replace: true });
+    } catch (err) {
+      toast({
+        title: "Could not create account",
+        description: err?.response?.data?.detail || "Please try again.",
+      });
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -47,27 +57,27 @@ export default function Signup() {
         <form onSubmit={submit} className="rounded-3xl border border-[#e7dfc9] bg-[#fbf7ee] p-8 space-y-4">
           <div>
             <Label htmlFor="name" className="text-[#3a3a3a]">Full Name *</Label>
-            <Input id="name" value={form.name} onChange={(e) => set("name", e.target.value)}
-              className="mt-2 h-11 bg-[#f6f1e6] border-[#e0d6bc] rounded-lg" required />
+            <Input id="name" value={form.full_name} onChange={(e) => set("full_name", e.target.value)}
+              className="mt-2 h-11 bg-[#f6f1e6] border-[#e0d6bc] rounded-lg" required autoComplete="name" />
           </div>
           <div>
             <Label htmlFor="email" className="text-[#3a3a3a]">Email *</Label>
             <Input id="email" type="email" value={form.email} onChange={(e) => set("email", e.target.value)}
-              className="mt-2 h-11 bg-[#f6f1e6] border-[#e0d6bc] rounded-lg" required />
+              className="mt-2 h-11 bg-[#f6f1e6] border-[#e0d6bc] rounded-lg" required autoComplete="email" />
           </div>
           <div>
             <Label htmlFor="phone" className="text-[#3a3a3a]">Phone</Label>
             <Input id="phone" value={form.phone} onChange={(e) => set("phone", e.target.value)}
-              className="mt-2 h-11 bg-[#f6f1e6] border-[#e0d6bc] rounded-lg" />
+              className="mt-2 h-11 bg-[#f6f1e6] border-[#e0d6bc] rounded-lg" autoComplete="tel" />
           </div>
           <div>
-            <Label htmlFor="password" className="text-[#3a3a3a]">Password *</Label>
+            <Label htmlFor="password" className="text-[#3a3a3a]">Password * (8+ characters)</Label>
             <Input id="password" type="password" value={form.password} onChange={(e) => set("password", e.target.value)}
-              className="mt-2 h-11 bg-[#f6f1e6] border-[#e0d6bc] rounded-lg" required />
+              className="mt-2 h-11 bg-[#f6f1e6] border-[#e0d6bc] rounded-lg" required minLength={8} autoComplete="new-password" />
           </div>
 
-          <Button type="submit" className="btn-lift h-12 w-full rounded-full bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6]">
-            Create Account
+          <Button type="submit" disabled={busy} className="btn-lift h-12 w-full rounded-full bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6]">
+            {busy ? "Creating…" : "Create Account"}
           </Button>
 
           <p className="text-center text-sm text-[#6a6a6a]">

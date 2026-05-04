@@ -13,18 +13,25 @@ export default function Home() {
   const { toast } = useToast();
   const [vipEmail, setVipEmail] = React.useState("");
 
-  const handleVIPJoin = (e) => {
+  const handleVIPJoin = async (e) => {
     e.preventDefault();
     if (!vipEmail || !vipEmail.includes("@")) {
       toast({ title: "Please enter a valid email", description: "We’ll send your welcome gift there." });
       return;
     }
+    try {
+      await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/public/vip-signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: vipEmail }),
+      });
+    } catch {}
     const existing = JSON.parse(localStorage.getItem(LS_KEYS.vip) || "[]");
     localStorage.setItem(LS_KEYS.vip, JSON.stringify([...existing, { email: vipEmail, ts: Date.now() }]));
     setVipEmail("");
     toast({
       title: "Welcome to the VIP list",
-      description: "$20 off your first visit is on its way to your inbox."
+      description: "$20 off your first visit is on its way to your inbox.",
     });
   };
 

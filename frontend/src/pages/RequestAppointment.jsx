@@ -43,7 +43,7 @@ export default function RequestAppointment() {
     setSelectedAddOns((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.fullName) {
       toast({ title: "Full name is required" });
@@ -53,14 +53,31 @@ export default function RequestAppointment() {
     const record = { ...form, addOns: selectedAddOns, ts: Date.now() };
     const existing = JSON.parse(localStorage.getItem(LS_KEYS.appointments) || "[]");
     localStorage.setItem(LS_KEYS.appointments, JSON.stringify([...existing, record]));
+    try {
+      await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/public/appointment-request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fullName: form.fullName,
+          email: form.email,
+          phone: form.phone,
+          returning: form.returning,
+          service: form.service,
+          date: form.date ? form.date.toISOString() : null,
+          time: form.time,
+          notes: form.notes,
+          addOns: selectedAddOns,
+        }),
+      });
+    } catch {}
     setTimeout(() => {
       setSubmitting(false);
       toast({
         title: "Request received",
-        description: "A care team member will personally confirm your appointment within 24 hours."
+        description: "A care team member will personally confirm your appointment within 24 hours.",
       });
       navigate("/");
-    }, 600);
+    }, 400);
   };
 
   const timeSlots = ["9:00 AM", "10:30 AM", "12:00 PM", "2:00 PM", "3:30 PM", "5:00 PM"];

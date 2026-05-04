@@ -276,16 +276,16 @@ frontend:
         comment: "Home, RequestAppointment, Signup, Login already validated via screenshots."
 
   - task: "Patient / Practitioner / Admin portals"
-    implemented: false
+    implemented: true
     working: "NA"
-    file: "frontend/src/pages/portal/*"
+    file: "frontend/src/pages/**"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
-        comment: "Next step after backend test pass."
+        comment: "Built full portal: AuthProvider+JWT+refresh+idle-timeout, Protected routes with RBAC, DEMO banner on every portal view. Patient: dashboard, multi-step intake (5 steps w/ consent+signature), chart (read-only notes), files upload/list/download, security(MFA). Provider: dashboard, patient list w/ inline create, patient chart with tabs (summary/intake/notes/files), SOAP note create + append-only amend inline, file upload per client. Admin: overview stats, users CRUD + role change, audit log viewer with action filter. Marketing Login/Signup/RequestAppt/VIP now call real backend. Verified via live login as admin@natmedsol.local -> URL redirects to /portal/admin and H1='Admin Overview'."
 
 metadata:
   created_by: "main_agent"
