@@ -1,0 +1,57 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  margin: 0;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #f6f1e6;
+  color: #2a2a2a;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
+}
+
+@layer base {
+  :root {
+    --background: 42 44% 94%;
+    --foreground: 150 20% 12%;
+    --card: 40 40% 98%;
+    --card-foreground: 150 20% 12%;
+    --popover: 40 40% 98%;
+    --popover-foreground: 150 20% 12%;
+    --primary: 148 23% 24%;
+    --primary-foreground: 40 40% 98%;
+    --secondary: 42 30% 90%;
+    --secondary-foreground: 148 23% 24%;
+    --muted: 40 25% 92%;
+    --muted-foreground: 150 8% 38%;
+    --accent: 40 55% 52%;
+    --accent-foreground: 150 20% 12%;
+    --destructive: 0 72% 48%;
+    --destructive-foreground: 40 40% 98%;
+    --border: 42 20% 85%;
+    --input: 42 20% 85%;
+    --ring: 148 23% 24%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+::selection {
+  background: #c19a4b;
+  color: #1a1a1a;
+}
