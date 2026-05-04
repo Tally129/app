@@ -439,6 +439,157 @@ class MessageOut(BaseModel):
     sender_id: str
     sender_role: str
     sender_name: Optional[str] = None
+
+
+# =========== PHASE 4: TREATMENTS / POS / INVENTORY / TIME CLOCK / FRONT DESK / IMPORT ===========
+
+
+class TreatmentIn(BaseModel):
+    name: str
+    category: Optional[str] = None
+    duration_min: int = 60
+    price: float
+    sku: Optional[str] = None
+    description: Optional[str] = None
+    active: bool = True
+
+
+class TreatmentOut(TreatmentIn):
+    id: str
+    created_at: datetime
+
+
+class InventoryItemIn(BaseModel):
+    name: str
+    sku: Optional[str] = None
+    category: Optional[str] = None
+    stock: int = 0
+    unit_price: float = 0.0
+    low_stock_threshold: int = 5
+    active: bool = True
+
+
+class InventoryItemOut(InventoryItemIn):
+    id: str
+    created_at: datetime
+
+
+class InventoryAdjustIn(BaseModel):
+    delta: int
+    reason: str = "manual"
+    note: Optional[str] = None
+
+
+PosLineType = Literal["treatment", "inventory", "custom"]
+PosPaymentMethod = Literal["chase_pos", "cash", "check", "card_other", "stripe"]
+
+
+class PosLine(BaseModel):
+    type: PosLineType
+    ref_id: Optional[str] = None
+    name: str
+    qty: int = 1
+    unit_price: float
+
+
+class PosCheckoutIn(BaseModel):
+    client_id: Optional[str] = None
+    lines: List[PosLine]
+    discount: float = 0.0
+    tip: float = 0.0
+    tax_rate: float = 0.0
+    payment_method: PosPaymentMethod = "chase_pos"
+    payment_ref: Optional[str] = None
+    note: Optional[str] = None
+
+
+class PosLineOut(PosLine):
+    line_total: float
+
+
+class TransactionOut(BaseModel):
+    id: str
+    client_id: Optional[str] = None
+    client_name: Optional[str] = None
+    lines: List[PosLineOut]
+    subtotal: float
+    discount: float
+    tip: float
+    tax: float
+    total: float
+    payment_method: str
+    payment_ref: Optional[str] = None
+    status: str
+    paid_at: Optional[datetime] = None
+    note: Optional[str] = None
+    created_by: str
+    created_by_name: Optional[str] = None
+    created_at: datetime
+
+
+# Time Clock
+class TimeBreak(BaseModel):
+    start: datetime
+    end: Optional[datetime] = None
+
+
+class TimeEntryOut(BaseModel):
+    id: str
+    user_id: str
+    user_name: Optional[str] = None
+    clock_in: datetime
+    clock_out: Optional[datetime] = None
+    breaks: List[TimeBreak] = []
+    total_minutes: Optional[float] = None
+    note: Optional[str] = None
+    edited_by: Optional[str] = None
+
+
+class TimeEditIn(BaseModel):
+    clock_in: Optional[datetime] = None
+    clock_out: Optional[datetime] = None
+    note: Optional[str] = None
+
+
+# Front Desk
+FrontDeskStatus = Literal["scheduled", "checked_in", "in_room", "checked_out", "no_show"]
+
+
+class FrontDeskCheckIn(BaseModel):
+    client_id: str
+    appointment_id: Optional[str] = None
+    walk_in: bool = False
+    room: Optional[str] = None
+
+
+class FrontDeskUpdate(BaseModel):
+    status: Optional[FrontDeskStatus] = None
+    room: Optional[str] = None
+
+
+class FrontDeskOut(BaseModel):
+    id: str
+    client_id: str
+    client_name: Optional[str] = None
+    appointment_id: Optional[str] = None
+    walk_in: bool = False
+    status: FrontDeskStatus
+    room: Optional[str] = None
+    checked_in_at: Optional[datetime] = None
+    checked_out_at: Optional[datetime] = None
+    created_at: datetime
+
+
+# Account / password
+class ProfileUpdate(BaseModel):
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
+
     body: str
     attachment_file_ids: List[str] = []
     read_by: List[str] = []
