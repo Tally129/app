@@ -15,31 +15,47 @@ import {
   Activity,
   Menu,
   X,
+  CalendarDays,
+  Clock,
+  Receipt,
+  Crown,
+  Bell,
+  Sparkles,
 } from "lucide-react";
 
 const NAV = {
   client: [
     { to: "/portal/patient", label: "Dashboard", icon: LayoutDashboard },
+    { to: "/portal/patient/appointments", label: "Appointments", icon: CalendarDays },
     { to: "/portal/patient/intake", label: "Intake", icon: ClipboardList },
     { to: "/portal/patient/chart", label: "My Chart", icon: FileText },
+    { to: "/portal/patient/plan", label: "Treatment Plan", icon: Sparkles },
     { to: "/portal/patient/files", label: "Files", icon: FolderOpen },
+    { to: "/portal/patient/membership", label: "Membership", icon: Crown },
+    { to: "/portal/patient/billing", label: "Billing", icon: Receipt },
     { to: "/portal/patient/security", label: "Security", icon: ShieldCheck },
   ],
   practitioner: [
     { to: "/portal/provider", label: "Dashboard", icon: LayoutDashboard },
+    { to: "/portal/provider/schedule", label: "Schedule", icon: CalendarDays },
+    { to: "/portal/provider/availability", label: "Availability", icon: Clock },
     { to: "/portal/provider/patients", label: "Patients", icon: Users },
     { to: "/portal/provider/security", label: "Security", icon: ShieldCheck },
   ],
   staff: [
     { to: "/portal/provider", label: "Dashboard", icon: LayoutDashboard },
+    { to: "/portal/provider/schedule", label: "Schedule", icon: CalendarDays },
     { to: "/portal/provider/patients", label: "Patients", icon: Users },
     { to: "/portal/provider/security", label: "Security", icon: ShieldCheck },
   ],
   admin: [
     { to: "/portal/admin", label: "Overview", icon: LayoutDashboard },
     { to: "/portal/admin/users", label: "Users & Roles", icon: UserCog },
-    { to: "/portal/admin/audit", label: "Audit Log", icon: Activity },
     { to: "/portal/provider/patients", label: "Patients", icon: Users },
+    { to: "/portal/provider/schedule", label: "Schedule", icon: CalendarDays },
+    { to: "/portal/admin/memberships", label: "Memberships", icon: Crown },
+    { to: "/portal/admin/reminders", label: "Reminders", icon: Bell },
+    { to: "/portal/admin/audit", label: "Audit Log", icon: Activity },
     { to: "/portal/admin/security", label: "Security", icon: ShieldCheck },
   ],
 };

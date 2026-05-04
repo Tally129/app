@@ -8,7 +8,8 @@ import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
 import { Label } from "../../components/ui/label";
 import { useToast } from "../../hooks/use-toast";
-import { ChevronLeft, PlusCircle, Save, Upload, Download, FolderOpen } from "lucide-react";
+import { ChevronLeft, PlusCircle, Save, Upload, Download, FolderOpen, DollarSign } from "lucide-react";
+import TreatmentPlanBuilder from "../../components/TreatmentPlanBuilder";
 
 export default function PatientChart() {
   const { id } = useParams();
@@ -107,11 +108,13 @@ export default function PatientChart() {
       />
 
       <Tabs defaultValue="summary" className="w-full">
-        <TabsList className="bg-[#f1ead8] p-1 rounded-full">
+        <TabsList className="bg-[#f1ead8] p-1 rounded-full flex-wrap h-auto">
           <TabsTrigger value="summary" className="rounded-full px-4">Summary</TabsTrigger>
           <TabsTrigger value="intake" className="rounded-full px-4">Intake</TabsTrigger>
           <TabsTrigger value="notes" className="rounded-full px-4">SOAP Notes</TabsTrigger>
+          <TabsTrigger value="plan" className="rounded-full px-4">Treatment Plan</TabsTrigger>
           <TabsTrigger value="files" className="rounded-full px-4">Files</TabsTrigger>
+          <TabsTrigger value="billing" className="rounded-full px-4">Billing</TabsTrigger>
         </TabsList>
 
         <TabsContent value="summary" className="mt-6">
@@ -221,6 +224,10 @@ export default function PatientChart() {
           ))}
         </TabsContent>
 
+        <TabsContent value="plan" className="mt-6">
+          <TreatmentPlanBuilder clientId={id} />
+        </TabsContent>
+
         <TabsContent value="files" className="mt-6">
           <div className="flex justify-end mb-3">
             <Button onClick={onPickFile} disabled={uploading} className="btn-lift h-10 rounded-full bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6]">
@@ -262,6 +269,11 @@ export default function PatientChart() {
             </div>
           )}
         </TabsContent>
+
+        <TabsContent value="billing" className="mt-6">
+          <PatientBillingTab clientId={id} />
+        </TabsContent>
+
       </Tabs>
     </PortalLayout>
   );
@@ -302,3 +314,96 @@ function IntakeSection({ title, data }) {
     </div>
   );
 }
+
+function PatientBillingTab({ clientId }) {
+  const { toast } = useToast();
+  const [invoices, setInvoices] = React.useState([]);
+  const [form, setForm] = React.useState({ description: "", amount: "" });
+
+  const load = React.useCallback(() => {
+    api.get("/invoices", { params: { client_id: clientId } }).then((r) => setInvoices(r.data || []));
+  }, [clientId]);
+  React.useEffect(() => { load(); }, [load]);
+
+  const create = async () => {
+    if (!form.description || !form.amount) return toast({ title: "Add description & amount" });
+    try {
+      await api.post("/invoices", {
+        client_id: clientId,
+        description: form.description,
+        amount: Number(form.amount),
+      });
+      toast({ title: "Invoice created" });
+      setForm({ description: "", amount: "" });
+      load();
+    } catch (e) { toast({ title: "Failed" }); }
+  };
+
+  const markPaid = async (inv) => {
+    const ref = window.prompt("Chase POS terminal reference (optional):", "");
+    try {
+      await api.post(`/invoices/${inv.id}/mark-paid`, { method: "chase_pos_manual", external_ref: ref || null });
+      toast({ title: "Marked paid" });
+      load();
+    } catch { toast({ title: "Failed" }); }
+  };
+
+  return (
+    <div>
+      <div className="rounded-2xl border border-[#c19a4b] bg-[#fbf7ee] p-5 mb-5 grid md:grid-cols-4 gap-3">
+        <div className="md:col-span-2">
+          <Label>Description</Label>
+          <Input className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]" placeholder="e.g. IV Drip + consult" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+        </div>
+        <div>
+          <Label>Amount (USD)</Label>
+          <Input className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]" type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
+        </div>
+        <div className="flex items-end">
+          <Button onClick={create} className="w-full rounded-full bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6]">
+            <DollarSign size={14} className="mr-1" /> Add invoice
+          </Button>
+        </div>
+      </div>
+
+      {invoices.length === 0 ? (
+        <div className="text-sm text-[#6a6a6a]">No invoices yet.</div>
+      ) : (
+        <div className="rounded-2xl border border-[#e7dfc9] bg-[#fbf7ee] overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-[#f1ead8] text-[#8a6a3c] uppercase text-[11px] tracking-widest">
+              <tr>
+                <th className="text-left py-3 px-4">Date</th>
+                <th className="text-left py-3 px-4">Description</th>
+                <th className="text-right py-3 px-4">Amount</th>
+                <th className="text-left py-3 px-4">Status</th>
+                <th className="text-right py-3 px-4">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invoices.map((i) => (
+                <tr key={i.id} className="border-t border-[#e7dfc9]">
+                  <td className="py-3 px-4 text-[#6a6a6a]">{new Date(i.created_at).toLocaleDateString()}</td>
+                  <td className="py-3 px-4">{i.description}</td>
+                  <td className="py-3 px-4 text-right">${i.amount.toFixed(2)}</td>
+                  <td className="py-3 px-4">
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${i.status === "paid" ? "bg-[#e7dfc9] text-[#2f4a3a]" : "bg-[#fbf2d9] text-[#6b4a1c]"}`}>{i.status}</span>
+                    {i.payment_method && <span className="ml-2 text-[10px] text-[#6a6a6a]">({i.payment_method.replace("_", " ")})</span>}
+                  </td>
+                  <td className="py-3 px-4 text-right">
+                    {i.status !== "paid" && (
+                      <Button size="sm" variant="outline" onClick={() => markPaid(i)} className="rounded-full border-[#c19a4b] text-[#8a6a3c] hover:bg-[#c19a4b] hover:text-[#1f2a22]">
+                        Mark paid (Chase POS)
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+

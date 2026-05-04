@@ -34,7 +34,6 @@ export default function Footer() {
           <ul className="mt-3 space-y-2 text-sm">
             <li><Link to="/" className="text-[#3a3a3a] hover:text-[#2f4a3a]">Home</Link></li>
             <li><Link to="/request-appointment" className="text-[#3a3a3a] hover:text-[#2f4a3a]">Request Appointment</Link></li>
-            <li><Link to="/signup" className="text-[#3a3a3a] hover:text-[#2f4a3a]">Create Client Account</Link></li>
             <li><Link to="/login" className="text-[#3a3a3a] hover:text-[#2f4a3a]">Patient Portal</Link></li>
           </ul>
         </div>

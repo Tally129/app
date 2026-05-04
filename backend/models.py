@@ -202,5 +202,153 @@ class AuditLogOut(BaseModel):
     ts: datetime
 
 
+
+# =========== PHASE 2 ===========
+
+# --------- Appointments (real) ---------
+AppointmentStatus = Literal["requested", "confirmed", "completed", "canceled", "no_show"]
+
+
+class AppointmentIn(BaseModel):
+    client_id: str
+    practitioner_id: Optional[str] = None
+    service: Optional[str] = None
+    start: datetime  # ISO
+    end: datetime
+    notes: Optional[str] = None
+    status: AppointmentStatus = "confirmed"
+
+
+class AppointmentUpdate(BaseModel):
+    start: Optional[datetime] = None
+    end: Optional[datetime] = None
+    service: Optional[str] = None
+    practitioner_id: Optional[str] = None
+    status: Optional[AppointmentStatus] = None
+    notes: Optional[str] = None
+
+
+class AppointmentOut(BaseModel):
+    id: str
+    client_id: str
+    client_name: Optional[str] = None
+    practitioner_id: Optional[str] = None
+    practitioner_name: Optional[str] = None
+    service: Optional[str] = None
+    start: datetime
+    end: datetime
+    status: AppointmentStatus
+    notes: Optional[str] = None
+    created_at: datetime
+    created_by: Optional[str] = None
+
+
+# --------- Availability (recurring weekly) ---------
+class AvailabilityIn(BaseModel):
+    practitioner_id: Optional[str] = None  # defaults to self
+    weekday: int  # 0=Mon .. 6=Sun
+    start_time: str  # HH:MM
+    end_time: str  # HH:MM
+    active: bool = True
+
+
+class AvailabilityOut(AvailabilityIn):
+    id: str
+    practitioner_id: str
+
+
+# --------- Memberships ---------
+MembershipStatus = Literal["pending", "active", "paused", "canceled"]
+BillingMethod = Literal["stripe", "chase_pos", "manual"]
+
+
+class MembershipIn(BaseModel):
+    client_id: Optional[str] = None  # defaults to self for clients
+    tier: str  # essentials|core|vip
+    billing_method: BillingMethod = "chase_pos"
+
+
+class MembershipOut(BaseModel):
+    id: str
+    client_id: str
+    client_name: Optional[str] = None
+    tier: str
+    price: float
+    status: MembershipStatus
+    billing_method: BillingMethod
+    started_at: Optional[datetime] = None
+    next_bill_date: Optional[datetime] = None
+    stripe_subscription_id: Optional[str] = None
+    created_at: datetime
+
+
+# --------- Invoices ---------
+InvoiceStatus = Literal["due", "paid", "void"]
+PaymentMethod = Literal["stripe", "chase_pos_manual", "other"]
+
+
+class InvoiceIn(BaseModel):
+    client_id: str
+    appointment_id: Optional[str] = None
+    membership_id: Optional[str] = None
+    description: str
+    amount: float
+
+
+class InvoiceOut(BaseModel):
+    id: str
+    client_id: str
+    client_name: Optional[str] = None
+    appointment_id: Optional[str] = None
+    membership_id: Optional[str] = None
+    description: str
+    amount: float
+    status: InvoiceStatus
+    paid_at: Optional[datetime] = None
+    payment_method: Optional[PaymentMethod] = None
+    external_ref: Optional[str] = None
+    created_at: datetime
+
+
+class MarkPaidIn(BaseModel):
+    method: PaymentMethod = "chase_pos_manual"
+    external_ref: Optional[str] = None
+
+
+# --------- Treatment Plans ---------
+class PlanItem(BaseModel):
+    type: Literal["supplement", "diet", "lifestyle", "lab_order", "follow_up"]
+    title: str
+    detail: Optional[str] = None
+    dose: Optional[str] = None
+    frequency: Optional[str] = None
+    duration: Optional[str] = None
+    patient_visible: bool = True
+
+
+class PlanIn(BaseModel):
+    client_id: str
+    title: str
+    status: Literal["draft", "active", "completed"] = "active"
+    follow_up_days: Optional[int] = None
+    items: List[PlanItem] = []
+
+
+class PlanOut(PlanIn):
+    id: str
+    practitioner_id: str
+    practitioner_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+# --------- Reminder settings ---------
+class ReminderSettings(BaseModel):
+    appointment_reminder_hours_before: int = 24
+    appointment_reminder_channels: List[Literal["email", "sms"]] = ["email"]
+    follow_up_days_after: int = 7
+    enabled: bool = True
+
+
 def new_id() -> str:
     return str(uuid.uuid4())
