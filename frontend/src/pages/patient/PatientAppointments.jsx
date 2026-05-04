@@ -1,4 +1,5 @@
 import React from "react";
+import { Link } from "react-router-dom";
 import PortalLayout, { PortalHeader } from "../PortalLayout";
 import api from "../../lib/api";
 import { Button } from "../../components/ui/button";
@@ -6,14 +7,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { Label } from "../../components/ui/label";
 import { useToast } from "../../hooks/use-toast";
-import { CalendarDays, Plus, X } from "lucide-react";
+import { CalendarDays, Plus, X, Video, MapPin } from "lucide-react";
 
 export default function PatientAppointments() {
   const { toast } = useToast();
   const [items, setItems] = React.useState([]);
   const [open, setOpen] = React.useState(false);
   const [practitioners, setPractitioners] = React.useState([]);
-  const [form, setForm] = React.useState({ practitioner_id: "", date: "", slot: "" });
+  const [form, setForm] = React.useState({ practitioner_id: "", date: "", slot: "", visit_mode: "in_person", consent: false });
   const [slots, setSlots] = React.useState([]);
 
   const load = () => api.get("/appointments").then((r) => setItems(r.data || []));
@@ -37,6 +38,9 @@ export default function PatientAppointments() {
 
   const book = async () => {
     if (!form.slot) return toast({ title: "Pick a time slot" });
+    if (form.visit_mode === "telehealth" && !form.consent) {
+      return toast({ title: "Please acknowledge the telehealth consent" });
+    }
     const s = slots.find((x) => x.start === form.slot);
     if (!s) return;
     try {
@@ -48,8 +52,10 @@ export default function PatientAppointments() {
         start: s.start,
         end: s.end,
         status: "requested",
+        visit_mode: form.visit_mode,
+        consent_telehealth: form.visit_mode === "telehealth" ? form.consent : false,
       });
-      toast({ title: "Requested", description: "We’ll confirm your appointment shortly." });
+      toast({ title: "Requested", description: form.visit_mode === "telehealth" ? "We'll send your video visit link." : "We'll confirm your appointment shortly." });
       setOpen(false);
       load();
     } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
@@ -81,13 +87,25 @@ export default function PatientAppointments() {
       ) : (
         <ul className="space-y-3">
           {upcoming.map((a) => (
-            <li key={a.id} className="rounded-2xl border border-[#e7dfc9] bg-[#fbf7ee] p-5 flex items-center justify-between">
+            <li key={a.id} className="rounded-2xl border border-[#e7dfc9] bg-[#fbf7ee] p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div>
-                <div className="font-display text-lg text-[#1f2a22]">{new Date(a.start).toLocaleString([], { weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>
-                <div className="text-sm text-[#6a6a6a]">{a.service || "Consultation"} · with {a.practitioner_name || "Practitioner"}</div>
+                <div className="font-display text-lg text-[#1f2a22] flex items-center gap-2">
+                  {a.visit_mode === "telehealth" ? <Video size={16} className="text-[#2f4a3a]" /> : <MapPin size={16} className="text-[#2f4a3a]" />}
+                  {new Date(a.start).toLocaleString([], { weekday: "long", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                </div>
+                <div className="text-sm text-[#6a6a6a]">{a.service || "Consultation"} · with {a.practitioner_name || "Practitioner"} · {a.visit_mode === "telehealth" ? "Telehealth" : "In-person"}</div>
                 <div className="text-xs text-[#8a6a3c] uppercase tracking-widest mt-1">{a.status}</div>
               </div>
-              <Button size="sm" variant="outline" onClick={() => cancel(a)} className="rounded-full border-[#7a2a2a] text-[#7a2a2a] hover:bg-[#7a2a2a] hover:text-[#f6f1e6]"><X size={14} className="mr-1" /> Cancel</Button>
+              <div className="flex gap-2">
+                {a.visit_mode === "telehealth" && a.status !== "canceled" && (
+                  <Link to={`/portal/visit/${a.id}`}>
+                    <Button size="sm" className="rounded-full bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6]">
+                      <Video size={14} className="mr-1" /> Join visit
+                    </Button>
+                  </Link>
+                )}
+                <Button size="sm" variant="outline" onClick={() => cancel(a)} className="rounded-full border-[#7a2a2a] text-[#7a2a2a] hover:bg-[#7a2a2a] hover:text-[#f6f1e6]"><X size={14} className="mr-1" /> Cancel</Button>
+              </div>
             </li>
           ))}
         </ul>
@@ -111,6 +129,23 @@ export default function PatientAppointments() {
         <DialogContent className="bg-[#fbf7ee] border-[#e7dfc9]">
           <DialogHeader><DialogTitle className="font-display text-2xl">Book a visit</DialogTitle></DialogHeader>
           <div className="space-y-3">
+            <div>
+              <Label>Visit type</Label>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <button onClick={() => setForm({ ...form, visit_mode: "in_person", consent: false })}
+                  className={`rounded-xl border p-3 text-left text-sm ${form.visit_mode === "in_person" ? "border-[#2f4a3a] bg-[#f1ead8]" : "border-[#e0d6bc] bg-[#fbf7ee]"}`}>
+                  <MapPin size={16} className="text-[#2f4a3a] mb-1" />
+                  <div className="font-medium">In-person</div>
+                  <div className="text-xs text-[#6a6a6a]">At our Roswell clinic</div>
+                </button>
+                <button onClick={() => setForm({ ...form, visit_mode: "telehealth" })}
+                  className={`rounded-xl border p-3 text-left text-sm ${form.visit_mode === "telehealth" ? "border-[#2f4a3a] bg-[#f1ead8]" : "border-[#e0d6bc] bg-[#fbf7ee]"}`}>
+                  <Video size={16} className="text-[#2f4a3a] mb-1" />
+                  <div className="font-medium">Telehealth</div>
+                  <div className="text-xs text-[#6a6a6a]">Secure video visit</div>
+                </button>
+              </div>
+            </div>
             <div><Label>Practitioner</Label>
               <Select value={form.practitioner_id} onValueChange={(v) => setForm({ ...form, practitioner_id: v, slot: "" })}>
                 <SelectTrigger className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]"><SelectValue /></SelectTrigger>
@@ -139,6 +174,12 @@ export default function PatientAppointments() {
                   </div>
                 )}
               </div>
+            )}
+            {form.visit_mode === "telehealth" && (
+              <label className="flex items-start gap-2 text-xs text-[#3a3a3a] cursor-pointer rounded-xl border border-[#c19a4b] bg-[#fbf2d9] p-3">
+                <input type="checkbox" checked={form.consent} onChange={(e) => setForm({ ...form, consent: e.target.checked })} className="mt-0.5 accent-[#2f4a3a]" />
+                <span>I consent to a telehealth visit. I understand it does not replace emergency care and may be limited by technology.</span>
+              </label>
             )}
           </div>
           <DialogFooter>

@@ -10,6 +10,8 @@ import { Label } from "../../components/ui/label";
 import { useToast } from "../../hooks/use-toast";
 import { ChevronLeft, PlusCircle, Save, Upload, Download, FolderOpen, DollarSign } from "lucide-react";
 import TreatmentPlanBuilder from "../../components/TreatmentPlanBuilder";
+import LabsPanel from "../../components/LabsPanel";
+import SymptomTrends from "../../components/SymptomTrends";
 
 export default function PatientChart() {
   const { id } = useParams();
@@ -113,6 +115,8 @@ export default function PatientChart() {
           <TabsTrigger value="intake" className="rounded-full px-4">Intake</TabsTrigger>
           <TabsTrigger value="notes" className="rounded-full px-4">SOAP Notes</TabsTrigger>
           <TabsTrigger value="plan" className="rounded-full px-4">Treatment Plan</TabsTrigger>
+          <TabsTrigger value="labs" className="rounded-full px-4">Labs</TabsTrigger>
+          <TabsTrigger value="symptoms" className="rounded-full px-4">Symptoms</TabsTrigger>
           <TabsTrigger value="files" className="rounded-full px-4">Files</TabsTrigger>
           <TabsTrigger value="billing" className="rounded-full px-4">Billing</TabsTrigger>
         </TabsList>
@@ -226,6 +230,14 @@ export default function PatientChart() {
 
         <TabsContent value="plan" className="mt-6">
           <TreatmentPlanBuilder clientId={id} />
+        </TabsContent>
+
+        <TabsContent value="labs" className="mt-6">
+          <LabsPanel clientId={id} />
+        </TabsContent>
+
+        <TabsContent value="symptoms" className="mt-6">
+          <SymptomTrends clientId={id} />
         </TabsContent>
 
         <TabsContent value="files" className="mt-6">

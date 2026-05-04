@@ -217,6 +217,8 @@ class AppointmentIn(BaseModel):
     end: datetime
     notes: Optional[str] = None
     status: AppointmentStatus = "confirmed"
+    visit_mode: Literal["in_person", "telehealth"] = "in_person"
+    consent_telehealth: bool = False
 
 
 class AppointmentUpdate(BaseModel):
@@ -239,6 +241,9 @@ class AppointmentOut(BaseModel):
     end: datetime
     status: AppointmentStatus
     notes: Optional[str] = None
+    visit_mode: Literal["in_person", "telehealth"] = "in_person"
+    consent_telehealth: bool = False
+    telehealth: Optional[Dict[str, Any]] = None
     created_at: datetime
     created_by: Optional[str] = None
 
@@ -352,3 +357,95 @@ class ReminderSettings(BaseModel):
 
 def new_id() -> str:
     return str(uuid.uuid4())
+
+
+# =========== PHASE 3 + TELEHEALTH ===========
+
+VisitMode = Literal["in_person", "telehealth"]
+
+
+# Extend appointment models
+class AppointmentInV2(AppointmentIn):  # type: ignore
+    visit_mode: VisitMode = "in_person"
+    consent_telehealth: bool = False
+
+
+# --------- Symptom logs ---------
+class SymptomLogIn(BaseModel):
+    client_id: Optional[str] = None
+    symptom: str
+    severity: int = Field(ge=1, le=10)
+    note: Optional[str] = None
+    logged_at: Optional[datetime] = None
+
+
+class SymptomLogOut(BaseModel):
+    id: str
+    client_id: str
+    symptom: str
+    severity: int
+    note: Optional[str] = None
+    logged_at: datetime
+    created_at: datetime
+
+
+# --------- Lab values ---------
+class LabValueIn(BaseModel):
+    client_id: str
+    test_name: str
+    value: float
+    unit: Optional[str] = None
+    reference_low: Optional[float] = None
+    reference_high: Optional[float] = None
+    measured_at: datetime
+    notes: Optional[str] = None
+
+
+class LabValueOut(LabValueIn):
+    id: str
+    recorded_by: str
+    recorded_by_name: Optional[str] = None
+    created_at: datetime
+
+
+# --------- Secure messaging ---------
+class ThreadIn(BaseModel):
+    participant_id: str  # the other party
+    subject: str
+    first_message: Optional[str] = None
+
+
+class ThreadOut(BaseModel):
+    id: str
+    client_id: str
+    client_name: Optional[str] = None
+    practitioner_id: str
+    practitioner_name: Optional[str] = None
+    subject: str
+    last_message_at: Optional[datetime] = None
+    last_message_preview: Optional[str] = None
+    unread_for_me: int = 0
+    created_at: datetime
+
+
+class MessageIn(BaseModel):
+    body: str
+    attachment_file_ids: List[str] = []
+
+
+class MessageOut(BaseModel):
+    id: str
+    thread_id: str
+    sender_id: str
+    sender_role: str
+    sender_name: Optional[str] = None
+    body: str
+    attachment_file_ids: List[str] = []
+    read_by: List[str] = []
+    created_at: datetime
+
+
+# --------- Telehealth ---------
+class TelehealthConsentIn(BaseModel):
+    signature: str
+

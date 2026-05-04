@@ -1,4 +1,5 @@
 import React from "react";
+import { Link } from "react-router-dom";
 import PortalLayout, { PortalHeader } from "../PortalLayout";
 import api from "../../lib/api";
 import { useAuth } from "../../lib/auth";
@@ -43,7 +44,7 @@ export default function ProviderSchedule() {
   const [openNew, setOpenNew] = React.useState(false);
   const [editing, setEditing] = React.useState(null);
   const [newSlot, setNewSlot] = React.useState(null); // {date, time}
-  const [form, setForm] = React.useState({ client_id: "", service: "", duration: 60, notes: "", status: "confirmed" });
+  const [form, setForm] = React.useState({ client_id: "", service: "", duration: 60, notes: "", status: "confirmed", visit_mode: "in_person" });
 
   const weekEnd = React.useMemo(() => addDays(weekStart, 7), [weekStart]);
 
@@ -79,6 +80,7 @@ export default function ProviderSchedule() {
         service: form.service,
         notes: form.notes,
         status: form.status,
+        visit_mode: form.visit_mode,
         start: start.toISOString(),
         end: end.toISOString(),
       });
@@ -202,6 +204,16 @@ export default function ProviderSchedule() {
               <div><Label>Service</Label><Input className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]" value={form.service} onChange={(e) => setForm({ ...form, service: e.target.value })} /></div>
               <div><Label>Duration (min)</Label><Input className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]" type="number" value={form.duration} onChange={(e) => setForm({ ...form, duration: Number(e.target.value) || 60 })} /></div>
             </div>
+            <div>
+              <Label>Visit type</Label>
+              <Select value={form.visit_mode} onValueChange={(v) => setForm({ ...form, visit_mode: v })}>
+                <SelectTrigger className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="in_person">In-person</SelectItem>
+                  <SelectItem value="telehealth">Telehealth (video)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div><Label>Notes</Label><Textarea className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
           </div>
           <DialogFooter>
@@ -220,6 +232,12 @@ export default function ProviderSchedule() {
               <div><span className="text-[#6a6a6a]">Client:</span> {editing.client_name}</div>
               <div><span className="text-[#6a6a6a]">When:</span> {new Date(editing.start).toLocaleString()}</div>
               <div><span className="text-[#6a6a6a]">Service:</span> {editing.service || "—"}</div>
+              <div><span className="text-[#6a6a6a]">Visit type:</span> {editing.visit_mode === "telehealth" ? "Telehealth" : "In-person"}</div>
+              {editing.visit_mode === "telehealth" && (
+                <Link to={`/portal/visit/${editing.id}`} onClick={() => setEditing(null)}>
+                  <Button className="rounded-full bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6]">Join visit</Button>
+                </Link>
+              )}
               <div><Label>Status</Label>
                 <Select value={editing.status} onValueChange={(v) => updateAppt({ status: v })}>
                   <SelectTrigger className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]"><SelectValue /></SelectTrigger>

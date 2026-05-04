@@ -18,20 +18,25 @@ import {
   CalendarDays,
   Clock,
   Receipt,
-  Crown,
   Bell,
   Sparkles,
+  LineChart,
+  TestTube2,
+  MessageSquare,
+  Video,
 } from "lucide-react";
 
 const NAV = {
   client: [
     { to: "/portal/patient", label: "Dashboard", icon: LayoutDashboard },
     { to: "/portal/patient/appointments", label: "Appointments", icon: CalendarDays },
+    { to: "/portal/patient/messages", label: "Messages", icon: MessageSquare, badge: "messages" },
     { to: "/portal/patient/intake", label: "Intake", icon: ClipboardList },
     { to: "/portal/patient/chart", label: "My Chart", icon: FileText },
     { to: "/portal/patient/plan", label: "Treatment Plan", icon: Sparkles },
+    { to: "/portal/patient/symptoms", label: "Symptom tracker", icon: LineChart },
+    { to: "/portal/patient/labs", label: "Lab Results", icon: TestTube2 },
     { to: "/portal/patient/files", label: "Files", icon: FolderOpen },
-    { to: "/portal/patient/membership", label: "Membership", icon: Crown },
     { to: "/portal/patient/billing", label: "Billing", icon: Receipt },
     { to: "/portal/patient/security", label: "Security", icon: ShieldCheck },
   ],
@@ -40,6 +45,7 @@ const NAV = {
     { to: "/portal/provider/schedule", label: "Schedule", icon: CalendarDays },
     { to: "/portal/provider/availability", label: "Availability", icon: Clock },
     { to: "/portal/provider/patients", label: "Patients", icon: Users },
+    { to: "/portal/provider/messages", label: "Messages", icon: MessageSquare, badge: "messages" },
     { to: "/portal/provider/security", label: "Security", icon: ShieldCheck },
   ],
   staff: [
@@ -53,7 +59,6 @@ const NAV = {
     { to: "/portal/admin/users", label: "Users & Roles", icon: UserCog },
     { to: "/portal/provider/patients", label: "Patients", icon: Users },
     { to: "/portal/provider/schedule", label: "Schedule", icon: CalendarDays },
-    { to: "/portal/admin/memberships", label: "Memberships", icon: Crown },
     { to: "/portal/admin/reminders", label: "Reminders", icon: Bell },
     { to: "/portal/admin/audit", label: "Audit Log", icon: Activity },
     { to: "/portal/admin/security", label: "Security", icon: ShieldCheck },
@@ -64,7 +69,22 @@ export default function PortalLayout({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = React.useState(false);
+  const [unread, setUnread] = React.useState(0);
   const items = NAV[user?.role] || [];
+
+  React.useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const fetchUnread = async () => {
+      try {
+        const r = await (await import("../lib/api")).default.get("/messages/unread-count");
+        if (active) setUnread(r.data?.count || 0);
+      } catch {}
+    };
+    fetchUnread();
+    const t = setInterval(fetchUnread, 30_000);
+    return () => { active = false; clearInterval(t); };
+  }, [user]);
 
   const doLogout = async () => {
     await logout();
@@ -113,7 +133,12 @@ export default function PortalLayout({ children }) {
                   }
                 >
                   <Icon size={16} />
-                  {it.label}
+                  <span className="flex-1">{it.label}</span>
+                  {it.badge === "messages" && unread > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#c19a4b] text-[#1f2a22] text-[10px] font-semibold">
+                      {unread}
+                    </span>
+                  )}
                 </NavLink>
               );
             })}

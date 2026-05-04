@@ -84,59 +84,53 @@ export default function Home() {
         </div>
       </section>
 
-      {/* MEMBERSHIP TIERS */}
-      <section id="membership" className="max-w-6xl mx-auto px-6 mt-10">
-        <div className="text-center">
-          <p className="eyebrow text-[#8a6a3c]">Join as a member</p>
-          <h2 className="font-display text-[40px] md:text-[52px] text-[#1f2a22] mt-2">Membership Tiers</h2>
-          <p className="text-[#5a5a5a] mt-3">Monthly value, physician-led care. Cancel anytime.</p>
-          <div className="mt-4 flex items-center justify-center gap-3">
-            <span className="leaf-divider" /><Leaf size={14} className="text-[#c19a4b]" /><span className="leaf-divider" />
+      {/* TELEHEALTH */}
+      <section id="telehealth" className="max-w-6xl mx-auto px-6 mt-10">
+        <div className="rounded-3xl bg-[#fbf7ee] border border-[#e7dfc9] p-10 md:p-14 grid md:grid-cols-2 gap-10 items-center">
+          <div>
+            <p className="eyebrow text-[#8a6a3c]">Now offering</p>
+            <h2 className="font-display text-[38px] md:text-[46px] text-[#1f2a22] mt-2 leading-tight">
+              Telehealth visits from the comfort of home
+            </h2>
+            <p className="text-[#5a5a5a] mt-4 leading-relaxed">
+              Meet with Dr. Ravello on secure video for consults, follow-ups, lab reviews and protocol updates — wherever you are in Georgia.
+            </p>
+            <ul className="mt-5 space-y-2 text-sm text-[#3a3a3a]">
+              <li className="flex items-start gap-2"><Check size={16} className="mt-0.5 text-[#2f4a3a]" /> HD video with waiting room & in-visit chat</li>
+              <li className="flex items-start gap-2"><Check size={16} className="mt-0.5 text-[#2f4a3a]" /> Share labs or images on-screen during your visit</li>
+              <li className="flex items-start gap-2"><Check size={16} className="mt-0.5 text-[#2f4a3a]" /> Same personalized protocols, delivered digitally</li>
+            </ul>
+            <div className="mt-7 flex flex-col sm:flex-row gap-3">
+              <Link to="/request-appointment">
+                <Button className="btn-lift h-11 px-6 rounded-full bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6]">
+                  Book a telehealth visit
+                </Button>
+              </Link>
+              <Link to="/login">
+                <Button variant="outline" className="btn-lift h-11 px-6 rounded-full border-[#2f4a3a] text-[#2f4a3a] bg-transparent hover:bg-[#2f4a3a] hover:text-[#f6f1e6]">
+                  Join from portal
+                </Button>
+              </Link>
+            </div>
           </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-10">
-          {membershipTiers.map((t) => (
-            <div
-              key={t.id}
-              className={`card-hover relative rounded-2xl border bg-[#fbf7ee] p-7 flex flex-col ${
-                t.featured ? "border-[#c19a4b] tier-featured" : "border-[#e7dfc9]"
-              }`}
-            >
-              {t.featured && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-[#c19a4b] text-[#1f2a22] text-[11px] tracking-widest uppercase px-3 py-1 rounded-full">
-                  Most Popular
+          <div className="relative">
+            <div className="aspect-video rounded-2xl bg-[#2f4a3a] relative overflow-hidden shadow-2xl">
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-24 h-24 rounded-full bg-[#c19a4b]/30 border border-[#c19a4b]/60 flex items-center justify-center">
+                  <div className="w-16 h-16 rounded-full bg-[#c19a4b] text-[#1f2a22] flex items-center justify-center">
+                    <Leaf size={32} />
+                  </div>
                 </div>
-              )}
-              <h3 className="font-display text-[26px] text-[#1f2a22]">{t.name}</h3>
-              <div className="mt-2 flex items-baseline gap-1">
-                <span className="font-display text-[36px] text-[#2f4a3a]">${t.price}</span>
-                <span className="text-[#7a7a7a] text-sm">{t.cadence}</span>
               </div>
-              <p className="text-[#5a5a5a] text-sm mt-3 leading-relaxed">{t.blurb}</p>
-              <ul className="mt-5 space-y-2.5">
-                {t.perks.map((p) => (
-                  <li key={p} className="flex items-start gap-2 text-[14px] text-[#3a3a3a]">
-                    <Check size={16} className="mt-0.5 text-[#2f4a3a] shrink-0" />
-                    <span>{p}</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-auto pt-6">
-                <Link to="/signup">
-                  <Button
-                    className={`btn-lift w-full h-11 rounded-full ${
-                      t.featured
-                        ? "bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6]"
-                        : "bg-[#fbf7ee] border border-[#2f4a3a] text-[#2f4a3a] hover:bg-[#2f4a3a] hover:text-[#f6f1e6]"
-                    }`}
-                  >
-                    Join Now
-                  </Button>
-                </Link>
+              <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-[#f6f1e6] text-xs">
+                <span className="px-2 py-1 rounded-full bg-black/30 backdrop-blur">Dr. Ravello</span>
+                <span className="px-2 py-1 rounded-full bg-[#2f4a3a] border border-[#c19a4b]">● LIVE</span>
               </div>
             </div>
-          ))}
+            <div className="absolute -bottom-4 -right-4 bg-[#fbf7ee] border border-[#e7dfc9] rounded-full px-4 py-2 text-xs tracking-widest uppercase text-[#8a6a3c] shadow-lg">
+              Secure · Private · Easy
+            </div>
+          </div>
         </div>
       </section>
 
