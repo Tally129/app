@@ -27,6 +27,14 @@ import AdminUsers from "./pages/admin/AdminUsers";
 import AdminAudit from "./pages/admin/AdminAudit";
 import AdminReminders from "./pages/admin/AdminReminders";
 import TelehealthVisit from "./pages/TelehealthVisit";
+import MyAccount from "./pages/portal/MyAccount";
+import FrontDesk from "./pages/portal/FrontDesk";
+import PointOfSale from "./pages/portal/PointOfSale";
+import Treatments from "./pages/portal/Treatments";
+import TimeClock from "./pages/portal/TimeClock";
+import Inventory from "./pages/portal/Inventory";
+import Transactions from "./pages/portal/Transactions";
+import ImportClients from "./pages/portal/ImportClients";
 import { Toaster } from "./components/ui/toaster";
 import { AuthProvider } from "./lib/auth";
 import { Protected } from "./lib/Protected";
@@ -62,6 +70,7 @@ function App() {
             <Route path="/portal/patient/symptoms" element={<Protected roles={["client"]}><PatientSymptoms /></Protected>} />
             <Route path="/portal/patient/labs" element={<Protected roles={["client"]}><PatientLabs /></Protected>} />
             <Route path="/portal/patient/messages" element={<Protected roles={["client"]}><Messages /></Protected>} />
+            <Route path="/portal/patient/account" element={<Protected roles={["client"]}><MyAccount /></Protected>} />
             <Route path="/portal/patient/security" element={<Protected roles={["client"]}><Security /></Protected>} />
 
             {/* Provider & staff */}
@@ -72,6 +81,13 @@ function App() {
             <Route path="/portal/provider/availability" element={<Protected roles={["practitioner", "admin"]}><Availability /></Protected>} />
             <Route path="/portal/provider/messages" element={<Protected roles={["practitioner", "admin"]}><Messages /></Protected>} />
             <Route path="/portal/provider/security" element={<Protected roles={["practitioner", "staff", "admin"]}><Security /></Protected>} />
+            <Route path="/portal/provider/account" element={<Protected roles={["practitioner", "staff", "admin"]}><MyAccount /></Protected>} />
+            <Route path="/portal/provider/front-desk" element={<Protected roles={["practitioner", "staff", "admin"]}><FrontDesk /></Protected>} />
+            <Route path="/portal/provider/time-clock" element={<Protected roles={["practitioner", "staff", "admin"]}><TimeClock /></Protected>} />
+            <Route path="/portal/provider/treatments" element={<Protected roles={["practitioner", "staff", "admin"]}><Treatments /></Protected>} />
+            <Route path="/portal/provider/pos" element={<Protected roles={["staff", "admin"]}><PointOfSale /></Protected>} />
+            <Route path="/portal/provider/transactions" element={<Protected roles={["staff", "admin"]}><Transactions /></Protected>} />
+            <Route path="/portal/provider/inventory" element={<Protected roles={["staff", "admin"]}><Inventory /></Protected>} />
 
             {/* Admin */}
             <Route path="/portal/admin" element={<Protected roles={["admin"]}><AdminOverview /></Protected>} />
@@ -79,6 +95,14 @@ function App() {
             <Route path="/portal/admin/audit" element={<Protected roles={["admin"]}><AdminAudit /></Protected>} />
             <Route path="/portal/admin/reminders" element={<Protected roles={["admin"]}><AdminReminders /></Protected>} />
             <Route path="/portal/admin/security" element={<Protected roles={["admin"]}><Security /></Protected>} />
+            <Route path="/portal/admin/account" element={<Protected roles={["admin"]}><MyAccount /></Protected>} />
+            <Route path="/portal/admin/front-desk" element={<Protected roles={["admin"]}><FrontDesk /></Protected>} />
+            <Route path="/portal/admin/time-clock" element={<Protected roles={["admin"]}><TimeClock /></Protected>} />
+            <Route path="/portal/admin/treatments" element={<Protected roles={["admin"]}><Treatments /></Protected>} />
+            <Route path="/portal/admin/pos" element={<Protected roles={["admin"]}><PointOfSale /></Protected>} />
+            <Route path="/portal/admin/transactions" element={<Protected roles={["admin"]}><Transactions /></Protected>} />
+            <Route path="/portal/admin/inventory" element={<Protected roles={["admin"]}><Inventory /></Protected>} />
+            <Route path="/portal/admin/import-clients" element={<Protected roles={["admin"]}><ImportClients /></Protected>} />
           </Routes>
           <Toaster />
         </AuthProvider>

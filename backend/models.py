@@ -439,6 +439,10 @@ class MessageOut(BaseModel):
     sender_id: str
     sender_role: str
     sender_name: Optional[str] = None
+    body: str
+    attachment_file_ids: List[str] = []
+    read_by: List[str] = []
+    created_at: datetime
 
 
 # =========== PHASE 4: TREATMENTS / POS / INVENTORY / TIME CLOCK / FRONT DESK / IMPORT ===========
@@ -589,11 +593,6 @@ class ProfileUpdate(BaseModel):
 class PasswordChange(BaseModel):
     current_password: str
     new_password: str = Field(min_length=8)
-
-    body: str
-    attachment_file_ids: List[str] = []
-    read_by: List[str] = []
-    created_at: datetime
 
 
 # --------- Telehealth ---------

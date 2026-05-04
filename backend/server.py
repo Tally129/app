@@ -1650,7 +1650,7 @@ async def change_password(payload: PasswordChange, request: Request, user=Depend
 
 # ---------- Treatments ----------
 @api.get("/treatments", response_model=List[TreatmentOut])
-async def list_treatments(active_only: bool = False, user=Depends(get_current_user)):
+async def list_treatments(active_only: bool = False, user=Depends(require_roles("admin", "staff", "practitioner"))):
     q = {"active": True} if active_only else {}
     items = await db.treatments.find(q).sort("name", 1).to_list(500)
     return [_strip_id(i) for i in items]

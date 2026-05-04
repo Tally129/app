@@ -24,53 +24,162 @@ import {
   TestTube2,
   MessageSquare,
   Video,
+  ShoppingCart,
+  Boxes,
+  Stethoscope,
+  Timer,
+  Upload,
+  Wallet,
+  Briefcase,
+  UserCircle,
 } from "lucide-react";
 
+// =============== NAV CONFIG (grouped) ===============
 const NAV = {
   client: [
-    { to: "/portal/patient", label: "Dashboard", icon: LayoutDashboard },
-    { to: "/portal/patient/appointments", label: "Appointments", icon: CalendarDays },
-    { to: "/portal/patient/messages", label: "Messages", icon: MessageSquare, badge: "messages" },
-    { to: "/portal/patient/intake", label: "Intake", icon: ClipboardList },
-    { to: "/portal/patient/chart", label: "My Chart", icon: FileText },
-    { to: "/portal/patient/plan", label: "Treatment Plan", icon: Sparkles },
-    { to: "/portal/patient/symptoms", label: "Symptom tracker", icon: LineChart },
-    { to: "/portal/patient/labs", label: "Lab Results", icon: TestTube2 },
-    { to: "/portal/patient/files", label: "Files", icon: FolderOpen },
-    { to: "/portal/patient/billing", label: "Billing", icon: Receipt },
-    { to: "/portal/patient/security", label: "Security", icon: ShieldCheck },
+    {
+      group: "Today",
+      items: [
+        { to: "/portal/patient", label: "Dashboard", icon: LayoutDashboard },
+        { to: "/portal/patient/appointments", label: "Appointments", icon: CalendarDays },
+        { to: "/portal/patient/messages", label: "Messages", icon: MessageSquare, badge: "messages" },
+      ],
+    },
+    {
+      group: "My Health",
+      items: [
+        { to: "/portal/patient/intake", label: "Intake", icon: ClipboardList },
+        { to: "/portal/patient/chart", label: "My Chart", icon: FileText },
+        { to: "/portal/patient/plan", label: "Treatment Plan", icon: Sparkles },
+        { to: "/portal/patient/symptoms", label: "Symptom Tracker", icon: LineChart },
+        { to: "/portal/patient/labs", label: "Lab Results", icon: TestTube2 },
+        { to: "/portal/patient/files", label: "Files", icon: FolderOpen },
+        { to: "/portal/patient/billing", label: "Billing", icon: Receipt },
+      ],
+    },
+    {
+      group: "Settings",
+      items: [
+        { to: "/portal/patient/account", label: "My Account", icon: UserCircle },
+        { to: "/portal/patient/security", label: "Security", icon: ShieldCheck },
+      ],
+    },
   ],
+
   practitioner: [
-    { to: "/portal/provider", label: "Dashboard", icon: LayoutDashboard },
-    { to: "/portal/provider/schedule", label: "Schedule", icon: CalendarDays },
-    { to: "/portal/provider/availability", label: "Availability", icon: Clock },
-    { to: "/portal/provider/patients", label: "Patients", icon: Users },
-    { to: "/portal/provider/messages", label: "Messages", icon: MessageSquare, badge: "messages" },
-    { to: "/portal/provider/security", label: "Security", icon: ShieldCheck },
+    {
+      group: "Today",
+      items: [
+        { to: "/portal/provider", label: "Dashboard", icon: LayoutDashboard },
+        { to: "/portal/provider/front-desk", label: "Front Desk", icon: Briefcase },
+        { to: "/portal/provider/schedule", label: "Schedule", icon: CalendarDays },
+        { to: "/portal/provider/time-clock", label: "Time Clock", icon: Timer },
+      ],
+    },
+    {
+      group: "Clients",
+      items: [
+        { to: "/portal/provider/patients", label: "Clients", icon: Users },
+        { to: "/portal/provider/messages", label: "Messages", icon: MessageSquare, badge: "messages" },
+      ],
+    },
+    {
+      group: "Operations",
+      items: [
+        { to: "/portal/provider/availability", label: "Availability", icon: Clock },
+        { to: "/portal/provider/treatments", label: "Treatments", icon: Stethoscope },
+      ],
+    },
+    {
+      group: "Settings",
+      items: [
+        { to: "/portal/provider/account", label: "My Account", icon: UserCircle },
+        { to: "/portal/provider/security", label: "Security", icon: ShieldCheck },
+      ],
+    },
   ],
+
   staff: [
-    { to: "/portal/provider", label: "Dashboard", icon: LayoutDashboard },
-    { to: "/portal/provider/schedule", label: "Schedule", icon: CalendarDays },
-    { to: "/portal/provider/patients", label: "Patients", icon: Users },
-    { to: "/portal/provider/security", label: "Security", icon: ShieldCheck },
+    {
+      group: "Today",
+      items: [
+        { to: "/portal/provider", label: "Dashboard", icon: LayoutDashboard },
+        { to: "/portal/provider/front-desk", label: "Front Desk", icon: Briefcase },
+        { to: "/portal/provider/schedule", label: "Schedule", icon: CalendarDays },
+        { to: "/portal/provider/time-clock", label: "Time Clock", icon: Timer },
+      ],
+    },
+    {
+      group: "Clients",
+      items: [
+        { to: "/portal/provider/patients", label: "Clients", icon: Users },
+      ],
+    },
+    {
+      group: "Operations",
+      items: [
+        { to: "/portal/provider/pos", label: "Point of Sale", icon: ShoppingCart },
+        { to: "/portal/provider/transactions", label: "Transactions", icon: Wallet },
+        { to: "/portal/provider/inventory", label: "Inventory", icon: Boxes },
+        { to: "/portal/provider/treatments", label: "Treatments", icon: Stethoscope },
+      ],
+    },
+    {
+      group: "Settings",
+      items: [
+        { to: "/portal/provider/account", label: "My Account", icon: UserCircle },
+        { to: "/portal/provider/security", label: "Security", icon: ShieldCheck },
+      ],
+    },
   ],
+
   admin: [
-    { to: "/portal/admin", label: "Overview", icon: LayoutDashboard },
-    { to: "/portal/admin/users", label: "Users & Roles", icon: UserCog },
-    { to: "/portal/provider/patients", label: "Patients", icon: Users },
-    { to: "/portal/provider/schedule", label: "Schedule", icon: CalendarDays },
-    { to: "/portal/admin/reminders", label: "Reminders", icon: Bell },
-    { to: "/portal/admin/audit", label: "Audit Log", icon: Activity },
-    { to: "/portal/admin/security", label: "Security", icon: ShieldCheck },
+    {
+      group: "Today",
+      items: [
+        { to: "/portal/admin", label: "Overview", icon: LayoutDashboard },
+        { to: "/portal/admin/front-desk", label: "Front Desk", icon: Briefcase },
+        { to: "/portal/provider/schedule", label: "Schedule", icon: CalendarDays },
+        { to: "/portal/admin/time-clock", label: "Time Clock", icon: Timer },
+      ],
+    },
+    {
+      group: "Clients",
+      items: [
+        { to: "/portal/provider/patients", label: "Clients", icon: Users },
+        { to: "/portal/admin/import-clients", label: "Import Clients", icon: Upload },
+      ],
+    },
+    {
+      group: "Operations",
+      items: [
+        { to: "/portal/admin/pos", label: "Point of Sale", icon: ShoppingCart },
+        { to: "/portal/admin/transactions", label: "Transactions", icon: Wallet },
+        { to: "/portal/admin/inventory", label: "Inventory", icon: Boxes },
+        { to: "/portal/admin/treatments", label: "Treatments", icon: Stethoscope },
+      ],
+    },
+    {
+      group: "Settings",
+      items: [
+        { to: "/portal/admin/users", label: "Users & Roles", icon: UserCog },
+        { to: "/portal/admin/reminders", label: "Reminders", icon: Bell },
+        { to: "/portal/admin/audit", label: "Audit Log", icon: Activity },
+        { to: "/portal/admin/account", label: "My Account", icon: UserCircle },
+        { to: "/portal/admin/security", label: "Security", icon: ShieldCheck },
+      ],
+    },
   ],
 };
+
+const HOME_ROUTES = new Set(["/portal/patient", "/portal/provider", "/portal/admin"]);
 
 export default function PortalLayout({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = React.useState(false);
   const [unread, setUnread] = React.useState(0);
-  const items = NAV[user?.role] || [];
+  const groups = NAV[user?.role] || [];
 
   React.useEffect(() => {
     if (!user) return;
@@ -92,11 +201,14 @@ export default function PortalLayout({ children }) {
   };
 
   return (
-    <div className="min-h-screen bg-parchment font-body text-[#2a2a2a]">
+    <div className="min-h-screen bg-parchment font-body text-[#2a2a2a]" data-testid="portal-layout">
       <div className="top-ribbon" />
 
       {/* HIPAA DEMO BANNER */}
-      <div className="bg-[#7a2a2a] text-[#f6f1e6] text-[11px] tracking-widest uppercase text-center py-1.5 px-4">
+      <div
+        className="bg-[#7a2a2a] text-[#f6f1e6] text-[11px] tracking-widest uppercase text-center py-1.5 px-4"
+        data-testid="hipaa-demo-banner"
+      >
         DEMO ENVIRONMENT · NOT HIPAA COMPLIANT · DO NOT ENTER REAL PHI
       </div>
 
@@ -106,52 +218,68 @@ export default function PortalLayout({ children }) {
           className={`${
             open ? "translate-x-0" : "-translate-x-full"
           } md:translate-x-0 fixed md:sticky top-0 z-30 md:z-10 h-screen md:h-[calc(100vh-34px)] w-64 bg-[#fbf7ee] border-r border-[#e7dfc9] flex flex-col transition-transform`}
+          data-testid="portal-sidebar"
         >
           <div className="p-5 border-b border-[#e7dfc9] flex items-center justify-between">
             <Link to="/portal" className="block">
               <Logo size={56} withText={false} />
             </Link>
-            <button className="md:hidden text-[#2f4a3a]" onClick={() => setOpen(false)}>
+            <button
+              className="md:hidden text-[#2f4a3a]"
+              onClick={() => setOpen(false)}
+              data-testid="sidebar-close-btn"
+            >
               <X size={20} />
             </button>
           </div>
-          <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-            {items.map((it) => {
-              const Icon = it.icon;
-              return (
-                <NavLink
-                  key={it.to}
-                  to={it.to}
-                  end={it.to === "/portal/patient" || it.to === "/portal/provider" || it.to === "/portal/admin"}
-                  onClick={() => setOpen(false)}
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition ${
-                      isActive
-                        ? "bg-[#2f4a3a] text-[#f6f1e6]"
-                        : "text-[#3a3a3a] hover:bg-[#f1ead8]"
-                    }`
-                  }
-                >
-                  <Icon size={16} />
-                  <span className="flex-1">{it.label}</span>
-                  {it.badge === "messages" && unread > 0 && (
-                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#c19a4b] text-[#1f2a22] text-[10px] font-semibold">
-                      {unread}
-                    </span>
-                  )}
-                </NavLink>
-              );
-            })}
+          <nav className="flex-1 p-3 space-y-4 overflow-y-auto" data-testid="portal-nav">
+            {groups.map((grp) => (
+              <div key={grp.group} data-testid={`nav-group-${grp.group.toLowerCase().replace(/\s+/g, "-")}`}>
+                <div className="px-3 pt-1 pb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#8a6a3c]">
+                  {grp.group}
+                </div>
+                <div className="space-y-0.5">
+                  {grp.items.map((it) => {
+                    const Icon = it.icon;
+                    return (
+                      <NavLink
+                        key={it.to}
+                        to={it.to}
+                        end={HOME_ROUTES.has(it.to)}
+                        onClick={() => setOpen(false)}
+                        data-testid={`nav-link-${it.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+                        className={({ isActive }) =>
+                          `flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition ${
+                            isActive
+                              ? "bg-[#2f4a3a] text-[#f6f1e6]"
+                              : "text-[#3a3a3a] hover:bg-[#f1ead8]"
+                          }`
+                        }
+                      >
+                        <Icon size={15} />
+                        <span className="flex-1">{it.label}</span>
+                        {it.badge === "messages" && unread > 0 && (
+                          <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#c19a4b] text-[#1f2a22] text-[10px] font-semibold">
+                            {unread}
+                          </span>
+                        )}
+                      </NavLink>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </nav>
           <div className="p-4 border-t border-[#e7dfc9]">
-            <div className="text-xs text-[#6a6a6a] truncate">{user?.email}</div>
-            <div className="text-[10px] uppercase tracking-widest text-[#8a6a3c] mt-0.5">
+            <div className="text-xs text-[#6a6a6a] truncate" data-testid="sidebar-user-email">{user?.email}</div>
+            <div className="text-[10px] uppercase tracking-widest text-[#8a6a3c] mt-0.5" data-testid="sidebar-user-role">
               {user?.role}
             </div>
             <Button
               onClick={doLogout}
               variant="outline"
               className="mt-3 w-full h-9 rounded-full border-[#2f4a3a] text-[#2f4a3a] bg-transparent hover:bg-[#2f4a3a] hover:text-[#f6f1e6]"
+              data-testid="sidebar-logout-btn"
             >
               <LogOut size={14} className="mr-2" /> Sign out
             </Button>
@@ -161,11 +289,11 @@ export default function PortalLayout({ children }) {
         {/* Main */}
         <div className="flex-1 min-w-0">
           <div className="md:hidden p-3 border-b border-[#e7dfc9] bg-[#fbf7ee] flex items-center justify-between">
-            <button onClick={() => setOpen(true)} className="text-[#2f4a3a]">
+            <button onClick={() => setOpen(true)} className="text-[#2f4a3a]" data-testid="sidebar-open-btn">
               <Menu size={22} />
             </button>
             <Logo size={34} withText={false} />
-            <button onClick={doLogout} className="text-[#2f4a3a]">
+            <button onClick={doLogout} className="text-[#2f4a3a]" data-testid="mobile-logout-btn">
               <LogOut size={18} />
             </button>
           </div>
@@ -180,12 +308,12 @@ export function PortalHeader({ title, subtitle, actions }) {
   return (
     <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-8">
       <div>
-        <h1 className="font-display text-[34px] md:text-[42px] text-[#1f2a22] leading-tight">
+        <h1 className="font-display text-[34px] md:text-[42px] text-[#1f2a22] leading-tight" data-testid="page-title">
           {title}
         </h1>
-        {subtitle && <p className="text-[#6a6a6a] mt-1">{subtitle}</p>}
+        {subtitle && <p className="text-[#6a6a6a] mt-1" data-testid="page-subtitle">{subtitle}</p>}
       </div>
-      {actions && <div className="flex gap-2">{actions}</div>}
+      {actions && <div className="flex gap-2 flex-wrap">{actions}</div>}
     </div>
   );
 }
