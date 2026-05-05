@@ -315,7 +315,7 @@ function NewAppointmentDialog({ open, onOpenChange, prefill, practitioners, clie
   const { toast } = useToast();
   const [form, setForm] = React.useState({
     client_id: "", practitioner_id: "", treatment_id: "__custom__", duration: 60,
-    visit_mode: "in_clinic", reason: "", notes: "",
+    visit_mode: "in_person", reason: "", notes: "",
   });
   const [time, setTime] = React.useState(""); // HH:MM
   const [date, setDate] = React.useState("");

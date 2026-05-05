@@ -2727,13 +2727,23 @@ async def set_recurrence(appt_id: str, payload: dict,
     series_id = parent.get("series_id") or new_id()
     await db.appointments.update_one({"id": appt_id}, {"$set": {"series_id": series_id, "series_pattern": pattern}})
 
-    delta_days = {"weekly": 7, "biweekly": 14, "monthly": 30}.get(pattern, 7)
+    delta_days = {"weekly": 7, "biweekly": 14}.get(pattern)
+    use_months = pattern == "monthly"
     created = []
     base_start = parent["start"]
     base_end = parent["end"]
     for i in range(1, count + 1):
-        new_start = base_start + timedelta(days=delta_days * i)
-        new_end = base_end + timedelta(days=delta_days * i)
+        if use_months:
+            try:
+                from dateutil.relativedelta import relativedelta
+                new_start = base_start + relativedelta(months=i)
+                new_end = base_end + relativedelta(months=i)
+            except ImportError:
+                new_start = base_start + timedelta(days=30 * i)
+                new_end = base_end + timedelta(days=30 * i)
+        else:
+            new_start = base_start + timedelta(days=delta_days * i)
+            new_end = base_end + timedelta(days=delta_days * i)
         doc = {**{k: v for k, v in parent.items() if k != "_id"},
                "id": new_id(),
                "start": new_start, "end": new_end,
@@ -2895,6 +2905,7 @@ async def seed_demo():
         await db.visit_notes.create_index("client_id")
         await db.files.create_index("client_id")
         await db.audit_logs.create_index("ts")
+        await db.ws_tickets.create_index("expires_at", expireAfterSeconds=0)
     except Exception as e:
         logger.warning("Index creation warning: %s", e)
 
