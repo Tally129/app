@@ -1,0 +1,31 @@
+{
+  "summary": "Focused frontend regression retest of FrontDesk KPI filter bug (iter8). All 5 click flows PASS with staff login (frontdesk@natmedsol.local). setFilter is now correctly defined at /app/frontend/src/pages/portal/FrontDesk.jsx lines 86-91 and KPI cards now write ?filter=... to the URL, the fd-filter-clear chip appears/disappears correctly, and clicking the same active KPI toggles the filter off.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": [
+    {"step": "Staff sign in + navigate to /portal/staff/front-desk", "result": "PASS"},
+    {"step": "Click [data-testid='fd-kpi-walk-ins'] -> URL contains ?filter=walk_in", "result": "PASS"},
+    {"step": "fd-filter-clear visible, chip shows 'Filtered by walk in'", "result": "PASS"},
+    {"step": "Click [data-testid='fd-kpi-in-clinic'] -> URL becomes ?filter=in_clinic (replaces previous)", "result": "PASS"},
+    {"step": "Click [data-testid='fd-filter-clear'] -> ?filter removed, chip disappears", "result": "PASS"},
+    {"step": "Click same active KPI again -> toggles filter off (URL drops ?filter)", "result": "PASS"}
+  ],
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "setFilter correctly treats key === filterKey as a toggle-off (line 88), which satisfies the 'click same KPI to toggle' requirement.",
+    "Minor: the StatCard buttons do not have role='button' or aria-pressed to communicate filter state to assistive tech; ring-2 visual cue is present but purely visual."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (not retested)", "frontend": "100% (6/6 checks passed)"},
+  "test_credentials": "frontdesk@natmedsol.local / FrontDesk!2345 — login returns access_token and redirects to /portal/staff",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "FrontDesk KPI filter bug from iter8 is now fixed and verified. setFilter defined at FrontDesk.jsx L86-91 correctly writes/deletes ?filter param and supports toggle. The only minor backend leftover from iter8 (POST /api/forms/send returns link=null) remains un-fixed per this iteration's scope (frontend-only retest).",
+  "rca of the issue": "Previously undefined setFilter in FrontDesk.jsx has been added at lines 86-91: `const setFilter = (key) => { const next = new URLSearchParams(searchParams); if (!key || key === filterKey || key === 'all') next.delete('filter'); else next.set('filter', key); setSearchParams(next); };`. Confirmed via Playwright: URL transitions tested across walk_in, in_clinic, clear, and same-KPI toggle all produce the expected URL state."
+}

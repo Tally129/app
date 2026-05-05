@@ -75,9 +75,20 @@ export default function FrontDesk() {
     }
   };
 
-  const filtered = visits.filter((v) =>
-    !search || (v.client_name || "").toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = visits.filter((v) => {
+    if (search && !(v.client_name || "").toLowerCase().includes(search.toLowerCase())) return false;
+    if (filterKey === "in_clinic") return v.status === "checked_in" || v.status === "in_room";
+    if (filterKey === "walk_in") return v.walk_in;
+    if (filterKey === "checked_out") return v.status === "checked_out";
+    return true;
+  });
+
+  const setFilter = (key) => {
+    const next = new URLSearchParams(searchParams);
+    if (!key || key === filterKey || key === "all") next.delete("filter");
+    else next.set("filter", key);
+    setSearchParams(next);
+  };
 
   const counts = {
     in: visits.filter((v) => v.status === "checked_in" || v.status === "in_room").length,
