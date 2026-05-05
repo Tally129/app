@@ -368,49 +368,19 @@ class TestInventoryLots:
 
 
 # ---------- 9. Commission ----------
-class TestCommission:
-    def test_set_commission_clamps(self, admin_headers, practitioner_token):
-        # find a treatment
-        treats = requests.get(f"{API}/treatments", headers=admin_headers, timeout=10).json()
-        if not treats:
-            # create one
-            r = requests.post(f"{API}/treatments", headers=admin_headers, json={
-                "name": "TEST P7 Treatment", "price": 100.0, "duration_minutes": 30,
-            }, timeout=10)
-            assert r.status_code in (200, 201), r.text
-            treat = r.json()
-        else:
-            treat = treats[0]
-        me = requests.get(f"{API}/auth/me",
-                          headers={"Authorization": f"Bearer {practitioner_token}"}, timeout=10).json()
-        # Set 150 -> should clamp to 100
-        r = requests.put(f"{API}/treatments/{treat['id']}/commission",
-                         headers=admin_headers,
-                         json={"commissions": [{"practitioner_id": me["id"], "percent": 150}]},
-                         timeout=10)
-        assert r.status_code == 200, r.text
-        c = r.json()["commissions"]
-        assert c[0]["percent"] == 100.0
-        assert c[0]["practitioner_id"] == me["id"]
-
-    def test_admin_only(self, practitioner_headers):
+# DEPRECATED — commission feature removed in Phase 8 (wellness office is non-commissioned).
+# Endpoints PUT /treatments/{id}/commission and GET /reports/commissions now return 404.
+class TestCommissionRemoved:
+    def test_set_commission_returns_404(self, admin_headers):
         r = requests.put(f"{API}/treatments/anything/commission",
-                         headers=practitioner_headers,
+                         headers=admin_headers,
                          json={"commissions": []}, timeout=10)
-        assert r.status_code == 403
+        assert r.status_code == 404
 
-    def test_report_admin_only(self, practitioner_headers):
+    def test_report_returns_404(self, admin_headers):
         r = requests.get(f"{API}/reports/commissions?days=30",
-                         headers=practitioner_headers, timeout=10)
-        assert r.status_code == 403
-
-    def test_report_returns_shape(self, admin_headers):
-        r = requests.get(f"{API}/reports/commissions?days=30",
-                         headers=admin_headers, timeout=15)
-        assert r.status_code == 200, r.text
-        d = r.json()
-        assert d.get("window_days") == 30
-        assert isinstance(d.get("earnings"), list)
+                         headers=admin_headers, timeout=10)
+        assert r.status_code == 404
 
 
 # ---------- 10. Push ----------

@@ -87,8 +87,8 @@ export default function Login() {
 
       <section className="max-w-md mx-auto px-6 text-center mt-6">
         <div className="flex justify-center"><Logo size={86} /></div>
-        <h1 className="font-display text-[40px] text-[#1f2a22] mt-8">Patient Portal Sign In</h1>
-        <p className="text-[#5a5a5a] mt-2 text-sm">Access your records, intake and messages.</p>
+        <h1 className="font-display text-[40px] text-[#1f2a22] mt-8">Sign in</h1>
+        <p className="text-[#5a5a5a] mt-2 text-sm">Clients, practitioners, staff, and admins all sign in here.</p>
       </section>
 
       <section className="max-w-md mx-auto px-6 mt-8">

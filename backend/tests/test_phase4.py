@@ -90,7 +90,7 @@ class TestAuthAndAccount:
         hash directly so that documented credentials keep working."""
         import os as _os
         from pymongo import MongoClient
-        from auth_utils import hash_password as _hash
+        from backend.auth_utils import hash_password as _hash
         new_pwd = "TempPass!2345"
         mc = MongoClient(_os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
         db = mc[_os.environ.get("DB_NAME", "test_database")]

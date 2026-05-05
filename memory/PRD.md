@@ -1,62 +1,56 @@
 # Natural Medical Solutions — Wellness EMR / CRM
 
 ## Original Problem Statement
-HIPAA-aligned wellness EMR for `natmedsol.com` (Natural Medical Solutions Wellness Center). Wellness office, NOT a medical practice. Single-tenant, private app for one business — not a SaaS. Aesthetic adapted from medspa-concierge to NatMedSol's deep-green / parchment / gold palette.
+HIPAA-aligned wellness EMR for `natmedsol.com` (Natural Medical Solutions Wellness Center). Wellness office, **not** a medical practice. Single-tenant private app, not SaaS. Aesthetic adapted from medspa-concierge to NatMedSol's deep-green / parchment / gold palette.
 
 ## Personas
-- **Client:** PWA-installable; schedule, intake, chart/labs/plan, secure messaging, billing.
-- **Practitioner:** schedule, charts, telehealth (with live SOAP sidebar + AI draft), messaging, treatments, time clock, analytics.
+- **Client:** PWA-installable; schedule, intake, chart/labs/plan, secure messaging, billing. Sign in with **email or Google**.
+- **Practitioner:** schedule (full EHR view), charts, telehealth (live SOAP sidebar + AI draft), messaging, treatments, time clock, analytics.
 - **Staff:** front desk, POS, transactions, inventory (lots/expiry), time clock.
-- **Admin:** all the above + user mgmt, audit, CSV import, EOD reports, commission split, manual time-clock edits.
+- **Admin:** all of the above + user mgmt, audit, CSV import, EOD reports, manual time-clock edits.
+
+> **All roles sign in at `/login`** (no separate staff URL — the same form authenticates clients, practitioners, staff, and admins).
 
 ## Architecture
 ```
 /app
 ├── backend
-│   ├── audit.py / auth_utils.py / models.py / server.py (~2.9k lines, refactor pending)
-│   └── tests/
-│       ├── test_phase4.py (33 tests · 32 passing)
-│       ├── test_phase5.py (20 tests · 20 passing)
-│       ├── test_phase6.py (17 tests · 17 passing)
-│       └── test_phase7.py (28 tests · 28 passing) ⭐
+│   ├── audit.py / auth_utils.py / models.py / server.py (~3.1k lines, refactor pending)
+│   └── tests/  test_phase{4,5,6,7,8}.py — 109/110 (1 pre-existing skip)
 ├── frontend
 │   ├── public/{manifest.json, service-worker.js (push handlers), icons/}
 │   └── src/
 │       ├── components/{AddPatientWizard,…}
-│       ├── lib/{api, auth, Protected}
+│       ├── lib/{api, auth, push, Protected}
 │       └── pages/
-│           ├── PortalLayout.jsx
+│           ├── PortalLayout.jsx (auto-subscribes to push on login)
 │           ├── TelehealthVisit.jsx (WebRTC + SOAP sidebar + AI draft)
 │           ├── patient/, provider/, admin/, portal/
 └── memory/{PRD.md, test_credentials.md}
 ```
 
-## Tech Stack
-- **Backend:** FastAPI · Motor · GridFS · bcrypt + JWT · reportlab · WebSocket signaling · pyotp · **emergentintegrations (Claude Sonnet 4.5)** · pywebpush
-- **Frontend:** React + React Router · Tailwind + Shadcn UI · Lucide · Recharts · native `RTCPeerConnection` + `MediaRecorder` · PWA (manifest + SW)
-
 ## What's Implemented (✅)
-### Phase 1–6 — done
-JWT+RBAC+MFA+audit, intake, SOAP, GridFS files, appointments+availability, reminders, treatment plan, invoices, symptom + lab Recharts, secure messaging, all of Phase 4 ops (POS/Inventory/TimeClock/FrontDesk/Treatments/Transactions/ImportClients), Phase 5 (Analytics + PWA + Telehealth UI redesign + a11y), Phase 6 (EHR Add Patient wizard + Appointments tab + self-hosted WebRTC + Cash Drawer + N+1 fix).
+### Phase 1–7 — done
+JWT+RBAC+MFA+audit, intake, SOAP, GridFS files, appointments+availability, reminders, treatment plan, invoices, symptom tracker + lab Recharts, secure messaging, all of Phase 4 ops (POS/Inventory/TimeClock/FrontDesk/Treatments/Transactions/ImportClients), Phase 5 (Analytics + PWA + Telehealth UI redesign + a11y), Phase 6 (EHR Add Patient wizard + Appointments tab + self-hosted WebRTC + Cash Drawer + N+1 fix), Phase 7 (WS auth hardening + ICE config + live SOAP sidebar + auto-draft + Claude SOAP + recurring appts + lots/expiration + push infra + commissions).
 
-### Phase 7 — Security & Advanced Telehealth (May 5, 2026) ⭐ NEW
-- **WS auth hardening** — JWT removed from URL; new `POST /api/visits/{id}/ws-ticket` issues a **single-use ticket** (60s TTL, expireAfter index). WebSocket accepts `?ticket=...` (preferred) or `?token=...` (legacy fallback)
-- **coturn TURN env-var support** — backend `GET /api/webrtc/config` exposes `iceServers`. STUN by default; if `TURN_URL`/`TURN_USERNAME`/`TURN_PASSWORD` env are set, the entry is included automatically (frontend reads it). Deploy your own coturn anywhere and just point env vars
-- **In-call provider SOAP sidebar** — toggleable panel, 4 fields (S/O/A/P), auto-saves every 5s to `/api/visits/{id}/live-soap`. Buttons: "From chat" (rule-based draft from chat transcript), **"AI draft"** (Claude Sonnet 4.5 via `EMERGENT_LLM_KEY`), "Save to chart" (writes a real visit note)
-- **Auto-draft from chat transcript** — `POST /api/visits/{id}/auto-draft` returns SOAP-shaped JSON stitched from messages
-- **LLM-assisted SOAP draft** — `POST /api/visits/{id}/llm-soap` with intake + last note + chat → Claude Sonnet 4.5 → strict JSON SOAP draft
-- **Recurring appointments** — `POST /api/appointments/{id}/recurrence` (weekly/biweekly/monthly using `relativedelta`); `DELETE /api/appointments/series/{id}` cancels future series instances
-- **Inventory lots & expiration** — `POST /api/inventory/{id}/lots` (lot_number, qty, expires_on, note), increments stock; `GET /api/inventory/expiring?days=60` returns items needing rotation. UI banner on Inventory page
-- **Commission split** — `PUT /api/treatments/{id}/commission` (admin sets per-practitioner %), `GET /api/reports/commissions?days=30` returns per-practitioner earnings from POS treatment lines
-- **Web push (VAPID)** — `GET /api/push/public-key`, `POST /api/push/subscribe|unsubscribe`. Service worker has `push` + `notificationclick` handlers. **Infrastructure only — no broadcast triggers wired yet**
-- **Bug fixed by tester** (HIGH): `cancel_series` wrote British "cancelled" → AppointmentOut Literal expects American "canceled" → 500 on every list endpoint. Fixed + 15 corrupt rows repaired.
-- **Improvements applied after testing**: TTL index on `ws_tickets`, `relativedelta`-based monthly recurrence, default `visit_mode` aligned to `in_person`
+### Phase 8 — Push Triggers, Google SSO, Cleanup (May 5, 2026) ⭐ NEW
+- **Push notification triggers** wired to:
+  - Appointment 1-hour reminder — `_appointment_reminder_loop` runs every 5 min, idempotent via `reminder_sent_at` flag
+  - Daily expiring-inventory ping — `_expiring_inventory_loop` (admins/staff)
+  - New secure message — invoked from `messages.create` to other thread participants
+  - Low-stock on POS sale — admins/staff get a push when stock crosses threshold
+  - Visit started (telehealth in_session) — pings the client to join
+- **Emergent-managed Google SSO** via `POST /api/auth/google/session` exchanging `X-Session-ID` for our internal JWT. New Google accounts auto-created with role `client` and a matching Clients row. Existing email matches are linked.
+- **Removed commission feature entirely** (treatments here are not commission-based). Endpoints `PUT /api/treatments/{id}/commission` + `GET /api/reports/commissions` now 404. UI button + dialog removed from Treatments page.
+- **Login UX fixes** — title now "Sign in" (was "Patient Portal Sign In"), subtitle "Clients, practitioners, staff, and admins all sign in here." so staff don't wonder where to log in.
+- **Critical bug fix from tester** — `AppointmentStatus` Literal extended to include `scheduled`, `arrived`, `in_session`. Previously the EHR Start-visit button + visit-started push were dead code (Pydantic 422'd). Now functional.
+- **PWA push subscribe flow** — `/app/frontend/src/lib/push.js` ensures every authenticated user is subscribed (best-effort, silent failure).
 
 ### Quality Gates
-- 98/98 backend pytest pass (Phase 1–7)
+- 109/110 backend pytest pass (1 environmental skip)
 - HIPAA red banner permanent
 - RBAC verified across every endpoint
-- Audit logging on all mutations including telehealth WS join/leave + recording uploads + commission edits + recurrence creation
+- Audit logging on all mutations (incl. telehealth WS, recordings, recurrence, commission already removed)
 
 ## Test Credentials
 See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST123` (admin).
@@ -64,9 +58,10 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 ## Mocked / Pending Integrations
 | Service | Status |
 |---------|--------|
-| **Claude Sonnet 4.5** | ✅ LIVE via `EMERGENT_LLM_KEY` |
-| coturn TURN | ✅ env-var support; user deploys server, sets `TURN_URL/USER/PASS` |
-| Web push | ✅ VAPID infra + SW; broadcast triggers not wired |
+| **Claude Sonnet 4.5 (LLM SOAP)** | ✅ LIVE via `EMERGENT_LLM_KEY` |
+| **Emergent Google SSO** | ✅ LIVE |
+| **Web push (VAPID)** | ✅ LIVE — auto-subscribe + 5 trigger hooks wired |
+| coturn TURN | ✅ env-var support; user deploys server |
 | SendGrid email | stub |
 | Twilio SMS | stub |
 | Stripe | stub |
@@ -74,28 +69,26 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 ## Roadmap
 
 ### P1 — Next up
-- **`server.py` modular refactor** into `routers/{auth, clients, scheduling, billing, pos, time, telehealth, messaging, admin, analytics, reports, push}.py`. File is now ~2.9k lines; **deferred 4 sessions** — needs a dedicated session
-- **Wire push notification triggers** on: appointment reminders (1h before), new secure message, low-stock + expiring inventory alerts, visit started by provider
-- Switch `cancelled`/`canceled` to a proper `AppointmentStatus` enum (defense-in-depth against the Phase 7 spelling regression)
-- Robustify LLM JSON parser (strip ```json``` code fences before regex)
-- Validate `keys.p256dh` / `keys.auth` on `/push/subscribe`
+- **`server.py` modular refactor** into `routers/` — file is now ~3.1k lines (deferred 5 sessions). Its own dedicated session.
+- Migrate `AppointmentStatus` from Literal to a proper Python `Enum` + DB sanitizer at startup (defense-in-depth against the recurring "Literal vs DB drift" class of bug)
+- Validate `keys.p256dh` / `keys.auth` on `POST /api/push/subscribe`
+- Add `_httpx` timeout = 7s on Google session exchange (currently 15s — risk of worker stall)
+- Track + cancel background loops on shutdown event
 
 ### P2 — Future
-- Recurring appointments UI: edit-one-vs-edit-series, drag to reschedule
-- Inventory lot consumption strategy (FEFO — first-expiring-first-out) on POS
-- Provider commission paystub PDF
 - LLM-assisted intake summarizer (one-paragraph chart preview)
-- In-call screen-recording quality settings
 - iPad-optimized provider view
+- Recurring appointment UI: edit-one-vs-edit-series + drag to reschedule
+- FEFO (first-expiring-first-out) inventory consumption on POS
 
 ### P3 — Nice-to-have
-- Web push: client device manager (revoke per device)
-- Multi-tenant support (deferred — single-tenant per user)
+- Push: per-device manager (revoke per browser)
+- Web push for staff: shift-handoff notes, time-clock punch confirmations
 
 ## Known Limitations
-- HIPAA banner stays until BAA-covered hosting + encryption-at-rest enabled
-- WebRTC needs TURN for restrictive networks; bring-your-own coturn
+- HIPAA banner stays until BAA-covered hosting + encryption-at-rest
+- WebRTC needs TURN for restrictive networks (bring your own coturn)
 - Service worker registers only in production builds
 - `TEST123` is 7 chars — predates 8-char policy
 
-_Last updated: May 5, 2026 (Phase 7)_
+_Last updated: May 5, 2026 (Phase 8)_

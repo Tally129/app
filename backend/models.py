@@ -225,7 +225,7 @@ class AuditLogOut(BaseModel):
 # =========== PHASE 2 ===========
 
 # --------- Appointments (real) ---------
-AppointmentStatus = Literal["requested", "confirmed", "completed", "canceled", "no_show"]
+AppointmentStatus = Literal["requested", "scheduled", "confirmed", "arrived", "in_session", "completed", "canceled", "no_show"]
 
 
 class AppointmentIn(BaseModel):
