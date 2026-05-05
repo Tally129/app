@@ -382,7 +382,7 @@ function NewAppointmentDialog({ open, onOpenChange, prefill, practitioners, clie
             <Select value={form.visit_mode} onValueChange={(v) => setForm({ ...form, visit_mode: v })}>
               <SelectTrigger className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]" data-testid="newappt-mode"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="in_clinic">In clinic</SelectItem>
+                <SelectItem value="in_person">In clinic</SelectItem>
                 <SelectItem value="telehealth">Telehealth</SelectItem>
               </SelectContent>
             </Select>
