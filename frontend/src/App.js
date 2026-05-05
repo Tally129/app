@@ -36,6 +36,7 @@ import Inventory from "./pages/portal/Inventory";
 import Transactions from "./pages/portal/Transactions";
 import ImportClients from "./pages/portal/ImportClients";
 import Analytics from "./pages/portal/Analytics";
+import AppointmentsEHR from "./pages/provider/AppointmentsEHR";
 import { Toaster } from "./components/ui/toaster";
 import { AuthProvider } from "./lib/auth";
 import { Protected } from "./lib/Protected";
@@ -78,7 +79,8 @@ function App() {
             <Route path="/portal/provider" element={<Protected roles={["practitioner", "staff", "admin"]}><ProviderDashboard /></Protected>} />
             <Route path="/portal/provider/patients" element={<Protected roles={["practitioner", "staff", "admin"]}><PatientsList /></Protected>} />
             <Route path="/portal/provider/patients/:id" element={<Protected roles={["practitioner", "staff", "admin"]}><ProviderPatientChart /></Protected>} />
-            <Route path="/portal/provider/schedule" element={<Protected roles={["practitioner", "staff", "admin"]}><ProviderSchedule /></Protected>} />
+            <Route path="/portal/provider/schedule" element={<Protected roles={["practitioner", "staff", "admin"]}><AppointmentsEHR /></Protected>} />
+            <Route path="/portal/provider/appointments" element={<Protected roles={["practitioner", "staff", "admin"]}><AppointmentsEHR /></Protected>} />
             <Route path="/portal/provider/availability" element={<Protected roles={["practitioner", "admin"]}><Availability /></Protected>} />
             <Route path="/portal/provider/messages" element={<Protected roles={["practitioner", "admin"]}><Messages /></Protected>} />
             <Route path="/portal/provider/security" element={<Protected roles={["practitioner", "staff", "admin"]}><Security /></Protected>} />

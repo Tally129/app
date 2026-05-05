@@ -5,7 +5,7 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { useToast } from "../../hooks/use-toast";
-import { Download, Wallet, TrendingUp, FileText } from "lucide-react";
+import { Download, Wallet, TrendingUp, FileText, FileBarChart } from "lucide-react";
 
 const METHOD_LABELS = {
   chase_pos: "Chase POS", cash: "Cash", check: "Check", card_other: "Card", stripe: "Stripe",
@@ -51,7 +51,31 @@ export default function Transactions() {
 
   return (
     <PortalLayout>
-      <PortalHeader title="Transactions" subtitle="Every payment recorded across the practice" />
+      <PortalHeader
+        title="Transactions"
+        subtitle="Every payment recorded across the practice"
+        actions={
+          <Button
+            onClick={async () => {
+              try {
+                const token = localStorage.getItem(LS.access);
+                const r = await fetch(`${API_BASE}/reports/eod-cash-drawer`, { headers: { Authorization: `Bearer ${token}` } });
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                const blob = await r.blob();
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = `eod-cash-drawer-${new Date().toISOString().slice(0,10)}.pdf`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+              } catch (e) { toast({ title: "Failed to generate report", description: e.message }); }
+            }}
+            className="rounded-full bg-[#c19a4b] hover:bg-[#a8853f] text-[#1f2a22]"
+            data-testid="eod-cash-drawer-btn"
+          >
+            <FileBarChart size={16} className="mr-2" /> End-of-Day Cash Drawer PDF
+          </Button>
+        }
+      />
 
       <div className="grid sm:grid-cols-3 gap-4 mb-6">
         <StatCard label="Today's revenue" value={`$${todayTotal.toFixed(2)}`} icon={TrendingUp} />

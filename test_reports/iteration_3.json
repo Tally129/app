@@ -1,0 +1,43 @@
+{
+  "summary": "Phase 6 testing complete. Backend 17/17 new tests + 53/53 regression tests all PASS (70/70 total). All Phase 6 endpoints validated end-to-end: GET /api/reports/eod-cash-drawer (PDF + RBAC), POST /api/clients with extended EHR fields + auto-MRN (NMS-{6 hex}) + GET round-trip, /api/analytics/overview notes_by_provider shape (N+1 -> $in fix verified), /api/visits/{id}/chat (RBAC 403 + 404), /api/visits/{id}/recording (multipart upload, RBAC, GridFS persistence), and /api/ws/visit/{id} WebSocket signaling (close codes 4401/4404/4403 + chat persistence to db.visit_chat). Frontend: AppointmentsEHR week view with Up Next strip + 84 hour-cells, NewAppointmentDialog, side drawer with 4 workflow buttons, AddPatientWizard (4-step stepper + create + MRN column), Transactions EOD button — all working. Two real bugs were found and fixed (see updated_files).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase6.py",
+    "/app/test_reports/pytest/phase6_results.xml"
+  ],
+  "action_items": [
+    "Verify NewAppointmentDialog Mode select payload value: SelectItem options use 'in_clinic' / 'telehealth' but backend AppointmentIn.visit_mode Literal expects 'in_person' / 'telehealth' — submitting 'in_clinic' will 422. Suggest changing the SelectItem value to 'in_person' (display label can stay 'In clinic').",
+    "Cosmetic: TelehealthVisit header still reads appt.start_time instead of appt.start (carried over from iteration_2; one-line fix in /app/frontend/src/pages/TelehealthVisit.jsx).",
+    "Optional hardening: WS handler currently lets a 2nd practitioner take over by closing the first with code 4000 — works as designed, but consider returning a 'session-replaced' message to the displaced peer for UX clarity."
+  ],
+  "critical_code_review_comments": [
+    "BUG FIXED by tester (was blocking all WS connections): /app/backend/server.py ws_visit() called decode_token(token, kind='access') but auth_utils.decode_token signature is (token: str). All valid tokens were rejected, the server returned HTTP 403 at handshake. Fixed by removing the kind kwarg.",
+    "BUG FIXED by tester (was crashing NewAppointmentDialog): /app/frontend/src/pages/provider/AppointmentsEHR.jsx had <SelectItem value=''>— Custom —</SelectItem> which Radix Select forbids; throwing 'Uncaught runtime errors' modal that hid the dialog. Replaced empty value with '__custom__' and updated default form.treatment_id accordingly.",
+    "Visit-mode literal mismatch (above) is a follow-up — frontend submits 'in_clinic' but backend Literal accepts 'in_person'/'telehealth'. POST /api/appointments will 422 if user picks 'In clinic'.",
+    "server.py is now 2569 lines — refactor still deferred (mentioned in iteration_2 already).",
+    "WS endpoint accepts JWT in URL query string. Tokens are short-lived but they still hit access logs and proxy logs (visible in /var/log/supervisor/backend.out.log). Consider a one-shot signed handshake token or moving auth to first WS message after accept()."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase6.py (new, 17 tests)",
+    "/app/backend/server.py (fixed decode_token kwarg in ws_visit)",
+    "/app/frontend/src/pages/provider/AppointmentsEHR.jsx (replaced empty SelectItem value to fix Radix crash)"
+  ],
+  "success_rate": {
+    "backend": "100% (17/17 phase6, 53/53 regression)",
+    "frontend": "100% on tested EHR flows (Appointments, Wizard, Transactions EOD)"
+  },
+  "test_credentials": "Admin tallyravello@gmail.com / TEST123, Practitioner ravello@natmedsol.local / Ravello!2345, Client test_client_phase6@example.com / ClientPass123!",
+  "seed_data_creation": "Created TEST_p6_* clients via tests + 3 telehealth appointments (1 confirmed used by WS+chat+recording tests, 2 RBAC-only). Created 1 TEST UI Wiz P6 v2 patient via UI wizard.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 6 backend is fully covered by /app/backend/tests/test_phase6.py (17 tests, includes async WebSocket tests using `websockets` lib + pytest-asyncio mode=auto). The WS auth fix was a 1-line tester fix to remove the kind='access' kwarg; the function signature in auth_utils.decode_token only takes (token: str). The visit_mode mismatch between frontend SelectItem ('in_clinic') and backend AppointmentIn.visit_mode literal ('in_person') was NOT fixed — will cause 422 if a user actually submits 'In clinic' from the dialog. Self-hosted WebRTC live media itself was not exercised (requires 2 browsers + camera) but signaling/chat/recording paths are all green.",
+  "rca of the issue": "ROOT CAUSE 1: ws_visit handler in /app/backend/server.py invoked `decode_token(token, kind='access')`, but /app/backend/auth_utils.py decode_token signature is `(token: str)`. The TypeError raised inside try/except Exception caused websocket.close(code=4401) before accept(), surfacing as HTTP 403 to clients. Reproduction: any websockets.connect(wss://.../api/ws/visit/{any}?token={any valid jwt}) -> HTTP 403. Mitigation applied: removed `kind='access'` arg. ROOT CAUSE 2: AppointmentsEHR NewAppointmentDialog declared <SelectItem value=''> for the Treatment-template Custom option. Radix UI Select hard-throws when value === '' because the empty string is reserved to clear-and-show-placeholder. The 'Uncaught runtime errors' overlay then blocked all subsequent UI tests. Reproduction: /portal/provider/appointments -> click any empty hour cell. Mitigation applied: value='__custom__' + matching default in form.treatment_id."
+}

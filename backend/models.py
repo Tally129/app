@@ -91,6 +91,25 @@ class ClientIn(BaseModel):
     address: Optional[str] = None
     emergency_contact: Optional[str] = None
     assigned_practitioner_id: Optional[str] = None
+    # EHR-style extended fields (all optional, used by Add Patient wizard)
+    mrn: Optional[str] = None  # auto-generated client/patient ID
+    photo_file_id: Optional[str] = None
+    gender_identity: Optional[str] = None
+    pronouns: Optional[str] = None
+    language: Optional[str] = None
+    marital_status: Optional[str] = None
+    alt_phone: Optional[str] = None
+    referral_source: Optional[str] = None
+    primary_concern: Optional[str] = None
+    wellness_goals: Optional[str] = None
+    current_supplements: Optional[str] = None
+    dietary_restrictions: Optional[str] = None
+    allergies: Optional[str] = None
+    comms_pref: Optional[str] = None  # email | sms | phone
+    consent_telehealth: Optional[bool] = None
+    consent_photo: Optional[bool] = None
+    consent_marketing: Optional[bool] = None
+    notes: Optional[str] = None
     
     @field_validator('email')
     @classmethod

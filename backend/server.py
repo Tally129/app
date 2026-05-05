@@ -290,6 +290,9 @@ async def create_client(payload: ClientIn, request: Request,
     doc["id"] = new_id()
     doc["intake_completed"] = False
     doc["created_at"] = datetime.now(timezone.utc)
+    # Auto-generate MRN if not provided: NMS- + 6-char hex
+    if not doc.get("mrn"):
+        doc["mrn"] = f"NMS-{doc['id'][:6].upper()}"
     await db.clients.insert_one(doc)
     await log_audit(db, user["id"], user["email"], "client.create",
                     resource_type="client", resource_id=doc["id"],
@@ -2203,12 +2206,17 @@ async def analytics_overview(
     for n in notes:
         pid = n.get("provider_id") or "unknown"
         by_provider[pid] = by_provider.get(pid, 0) + 1
+    # single $in lookup instead of N+1
+    pids = [pid for pid in by_provider.keys() if pid != "unknown"]
+    users_map = {}
+    if pids:
+        async for u in db.users.find({"id": {"$in": pids}}, {"_id": 0, "id": 1, "full_name": 1}):
+            users_map[u["id"]] = u.get("full_name")
     notes_by_provider = []
     for pid, cnt in sorted(by_provider.items(), key=lambda x: x[1], reverse=True):
-        u = await db.users.find_one({"id": pid})
         notes_by_provider.append({
             "provider_id": pid,
-            "provider_name": u.get("full_name") if u else pid,
+            "provider_name": users_map.get(pid, pid),
             "notes": cnt,
         })
 
@@ -2237,6 +2245,280 @@ async def analytics_overview(
         "notes_by_provider": notes_by_provider[:10],
         "low_stock_items": len(low_stock),
     }
+
+
+# ---------- End-of-Day Cash Drawer Report (PDF) ----------
+@api.get("/reports/eod-cash-drawer")
+async def eod_cash_drawer(user=Depends(require_roles("admin", "staff"))):
+    """One-page PDF: today's revenue by method, top treatments, low-stock items."""
+    now = datetime.now(timezone.utc)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    txns = await db.transactions.find({
+        "status": "paid", "created_at": {"$gte": start, "$lt": now},
+    }).to_list(2000)
+
+    revenue_by_method = {}
+    total = 0.0
+    line_rev = {}
+    line_count = {}
+    for t in txns:
+        m = t.get("payment_method", "other")
+        revenue_by_method[m] = round(revenue_by_method.get(m, 0) + (t.get("total", 0) or 0), 2)
+        total += t.get("total", 0) or 0
+        for line in t.get("lines", []) or []:
+            key = line.get("name", "Unknown")
+            line_rev[key] = round(line_rev.get(key, 0) + (line.get("line_total", 0) or 0), 2)
+            line_count[key] = line_count.get(key, 0) + (line.get("qty", 1) or 1)
+    total = round(total, 2)
+    top_items = sorted(
+        [{"name": k, "qty": line_count.get(k, 0), "revenue": line_rev[k]} for k in line_rev],
+        key=lambda x: x["revenue"], reverse=True
+    )[:10]
+
+    inv = await db.inventory_items.find().to_list(500)
+    low = sorted(
+        [i for i in inv if (i.get("stock", 0) or 0) <= (i.get("low_stock_threshold", 5) or 5)],
+        key=lambda x: x.get("stock", 0)
+    )
+
+    METHOD = {
+        "chase_pos": "Chase POS", "cash": "Cash", "check": "Check",
+        "card_other": "Card", "stripe": "Stripe",
+    }
+
+    buf = _io.BytesIO()
+    c = pdfcanvas.Canvas(buf, pagesize=letter)
+    width, _ = letter
+    y = 10.5 * inch
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(0.75 * inch, y, "Natural Medical Solutions Wellness Center")
+    y -= 0.3 * inch
+    c.setFont("Helvetica", 10)
+    c.drawString(0.75 * inch, y, "End-of-Day Cash Drawer Report")
+    c.drawRightString(width - 0.75 * inch, y, now.strftime("%A, %b %d %Y · %I:%M %p UTC"))
+    y -= 0.4 * inch
+    c.line(0.75 * inch, y, width - 0.75 * inch, y)
+    y -= 0.3 * inch
+
+    # Revenue summary
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(0.75 * inch, y, f"Today's revenue ({len(txns)} transactions)")
+    y -= 0.25 * inch
+    c.setFont("Helvetica", 10)
+    for m, val in sorted(revenue_by_method.items(), key=lambda x: -x[1]):
+        c.drawString(1.0 * inch, y, METHOD.get(m, m.replace("_", " ").title()))
+        c.drawRightString(width - 0.75 * inch, y, f"${val:.2f}")
+        y -= 0.2 * inch
+    y -= 0.05 * inch
+    c.line(1.0 * inch, y, width - 0.75 * inch, y)
+    y -= 0.2 * inch
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(1.0 * inch, y, "TOTAL")
+    c.drawRightString(width - 0.75 * inch, y, f"${total:.2f}")
+    y -= 0.45 * inch
+
+    # Cash variance line for staff to fill in
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(0.75 * inch, y, "Drawer reconciliation")
+    y -= 0.25 * inch
+    c.setFont("Helvetica", 9)
+    c.drawString(1.0 * inch, y, f"Cash expected:  ${revenue_by_method.get('cash', 0):.2f}")
+    y -= 0.2 * inch
+    c.drawString(1.0 * inch, y, "Cash counted:   $ ____________")
+    y -= 0.2 * inch
+    c.drawString(1.0 * inch, y, "Variance:       $ ____________")
+    y -= 0.2 * inch
+    c.drawString(1.0 * inch, y, "Closed by: ______________________   Initials: _______")
+    y -= 0.4 * inch
+
+    # Top items
+    if top_items:
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(0.75 * inch, y, "Top items today")
+        y -= 0.25 * inch
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(1.0 * inch, y, "Item")
+        c.drawString(4.5 * inch, y, "Qty")
+        c.drawRightString(width - 0.75 * inch, y, "Revenue")
+        y -= 0.2 * inch
+        c.setFont("Helvetica", 9)
+        for it in top_items:
+            c.drawString(1.0 * inch, y, it["name"][:55])
+            c.drawString(4.5 * inch, y, str(it["qty"]))
+            c.drawRightString(width - 0.75 * inch, y, f"${it['revenue']:.2f}")
+            y -= 0.2 * inch
+        y -= 0.2 * inch
+
+    # Low stock
+    if low and y > 1.5 * inch:
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(0.75 * inch, y, f"Low-stock items ({len(low)})")
+        y -= 0.25 * inch
+        c.setFont("Helvetica", 9)
+        for i in low[:15]:
+            c.drawString(1.0 * inch, y,
+                         f"{i.get('name','—')[:50]} — stock {i.get('stock', 0)} (threshold {i.get('low_stock_threshold', 5)})")
+            y -= 0.18 * inch
+            if y < 1.0 * inch:
+                break
+
+    c.setFont("Helvetica-Oblique", 8)
+    c.drawString(0.75 * inch, 0.5 * inch,
+                 "Confidential · Generated by NatMedSol Portal · Demo environment")
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    await log_audit(db, user["id"], user["email"], "report.eod_cash_drawer")
+    return StreamingResponse(buf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="eod-cash-drawer-{now.date().isoformat()}.pdf"'})
+
+
+# ---------- Self-hosted WebRTC visit signaling (WebSocket) ----------
+from fastapi import WebSocket, WebSocketDisconnect
+
+# Active sessions: {appt_id: {role: WebSocket}}
+_visit_rooms = {}
+
+@api.websocket("/ws/visit/{appt_id}")
+async def ws_visit(websocket: WebSocket, appt_id: str, token: str = Query(...)):
+    """WebRTC signaling + chat relay for a 1:1 visit.
+    Forwards messages between the two participants (provider and client).
+    Roles: 'provider' or 'client' from the JWT.
+    """
+    # Authenticate via token query param
+    try:
+        payload = decode_token(token)
+        u = await db.users.find_one({"id": payload.get("sub")})
+        if not u:
+            await websocket.close(code=4401)
+            return
+    except Exception:
+        await websocket.close(code=4401)
+        return
+
+    appt = await db.appointments.find_one({"id": appt_id})
+    if not appt:
+        await websocket.close(code=4404)
+        return
+
+    role = "provider" if u["role"] in ("practitioner", "admin", "staff") else "client"
+    if role == "client":
+        sc = await _resolve_self_client(u)
+        if not sc or appt.get("client_id") != sc["id"]:
+            await websocket.close(code=4403)
+            return
+
+    await websocket.accept()
+    room = _visit_rooms.setdefault(appt_id, {})
+    # If a participant of the same role is already connected, close the old one
+    if room.get(role):
+        try:
+            await room[role].close(code=4000)
+        except Exception:
+            pass
+    room[role] = websocket
+
+    # Tell both peers about presence
+    other_role = "client" if role == "provider" else "provider"
+    if room.get(other_role):
+        try:
+            await room[other_role].send_json({"type": "peer-joined", "role": role})
+        except Exception:
+            pass
+    await websocket.send_json({"type": "joined", "role": role,
+                               "peer_present": bool(room.get(other_role))})
+
+    # Audit join
+    await log_audit(db, u["id"], u["email"], "telehealth.ws_join",
+                    resource_type="appointment", resource_id=appt_id,
+                    metadata={"role": role})
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            t = data.get("type")
+            # Messages we relay to the other peer: webrtc-offer, webrtc-answer, ice-candidate, chat
+            if t in ("webrtc-offer", "webrtc-answer", "ice-candidate", "chat",
+                     "media-state", "screen-share"):
+                peer_ws = room.get(other_role)
+                if peer_ws:
+                    try:
+                        await peer_ws.send_json({**data, "from": role})
+                    except Exception:
+                        pass
+                if t == "chat":
+                    # persist chat
+                    await db.visit_chat.insert_one({
+                        "id": new_id(), "appointment_id": appt_id,
+                        "from_user": u["id"], "from_role": role,
+                        "body": data.get("body", "")[:2000],
+                        "ts": datetime.now(timezone.utc),
+                    })
+            elif t == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.warning("ws_visit error: %s", e)
+    finally:
+        if room.get(role) is websocket:
+            room.pop(role, None)
+        peer_ws = room.get(other_role)
+        if peer_ws:
+            try:
+                await peer_ws.send_json({"type": "peer-left", "role": role})
+            except Exception:
+                pass
+        if not room:
+            _visit_rooms.pop(appt_id, None)
+        await log_audit(db, u["id"], u["email"], "telehealth.ws_leave",
+                        resource_type="appointment", resource_id=appt_id,
+                        metadata={"role": role})
+
+
+@api.get("/visits/{appt_id}/chat")
+async def visit_chat_history(appt_id: str, user=Depends(get_current_user)):
+    """Recent chat history for a visit (self-hosted)."""
+    a = await db.appointments.find_one({"id": appt_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if user["role"] == "client":
+        sc = await _resolve_self_client(user)
+        if not sc or a.get("client_id") != sc["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    msgs = await db.visit_chat.find({"appointment_id": appt_id}).sort("ts", 1).to_list(500)
+    return [_strip_id(m) for m in msgs]
+
+
+# ---------- Visit recording upload (chunked WebM to GridFS) ----------
+@api.post("/visits/{appt_id}/recording")
+async def upload_visit_recording(
+    appt_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    user=Depends(require_roles("practitioner", "admin", "staff")),
+):
+    a = await db.appointments.find_one({"id": appt_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    contents = await file.read()
+    file_id = await fs_bucket.upload_from_stream(
+        f"visit-{appt_id}-{int(datetime.now(timezone.utc).timestamp())}.webm",
+        contents,
+        metadata={"appointment_id": appt_id, "uploader_id": user["id"], "kind": "visit_recording"},
+    )
+    fid = str(file_id)
+    await db.appointments.update_one({"id": appt_id}, {"$push": {"recordings": {
+        "file_id": fid, "size": len(contents), "uploaded_by": user["id"],
+        "ts": datetime.now(timezone.utc),
+    }}})
+    await log_audit(db, user["id"], user["email"], "telehealth.recording_upload",
+                    resource_type="appointment", resource_id=appt_id,
+                    metadata={"size": len(contents)},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return {"file_id": fid, "size": len(contents)}
 
 
 # =================== STARTUP ===================

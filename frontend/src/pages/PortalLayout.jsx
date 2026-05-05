@@ -74,7 +74,7 @@ const NAV = {
       items: [
         { to: "/portal/provider", label: "Dashboard", icon: LayoutDashboard },
         { to: "/portal/provider/front-desk", label: "Front Desk", icon: Briefcase },
-        { to: "/portal/provider/schedule", label: "Schedule", icon: CalendarDays },
+        { to: "/portal/provider/appointments", label: "Appointments", icon: CalendarDays },
         { to: "/portal/provider/time-clock", label: "Time Clock", icon: Timer },
       ],
     },
@@ -108,7 +108,7 @@ const NAV = {
       items: [
         { to: "/portal/provider", label: "Dashboard", icon: LayoutDashboard },
         { to: "/portal/provider/front-desk", label: "Front Desk", icon: Briefcase },
-        { to: "/portal/provider/schedule", label: "Schedule", icon: CalendarDays },
+        { to: "/portal/provider/appointments", label: "Appointments", icon: CalendarDays },
         { to: "/portal/provider/time-clock", label: "Time Clock", icon: Timer },
       ],
     },
@@ -142,7 +142,7 @@ const NAV = {
       items: [
         { to: "/portal/admin", label: "Overview", icon: LayoutDashboard },
         { to: "/portal/admin/front-desk", label: "Front Desk", icon: Briefcase },
-        { to: "/portal/provider/schedule", label: "Schedule", icon: CalendarDays },
+        { to: "/portal/provider/appointments", label: "Appointments", icon: CalendarDays },
         { to: "/portal/admin/time-clock", label: "Time Clock", icon: Timer },
       ],
     },
