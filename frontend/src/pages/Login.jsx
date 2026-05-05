@@ -47,8 +47,34 @@ export default function Login() {
   };
 
   const googleSignIn = () => {
-    toast({ title: "Google sign-in coming soon", description: "For now please use email sign-in." });
+    // Emergent-managed Google Auth: redirect to provider, returns to /login#session_id=...
+    const redirect = `${window.location.origin}/login`;
+    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirect)}`;
   };
+
+  // Handle Google callback: parse #session_id=... from the URL fragment, exchange for our JWT
+  const { loginWithGoogleSession } = useAuth();
+  React.useEffect(() => {
+    const hash = window.location.hash || "";
+    const m = hash.match(/session_id=([^&]+)/);
+    if (!m) return;
+    (async () => {
+      try {
+        const res = await loginWithGoogleSession(m[1]);
+        // clear the fragment
+        window.history.replaceState({}, document.title, window.location.pathname);
+        const dest = roleHome(res.user.role);
+        toast({ title: "Welcome", description: res.user.email });
+        navigate(dest, { replace: true });
+      } catch (err) {
+        toast({
+          title: "Google sign-in failed",
+          description: err?.response?.data?.detail || "Try email sign-in instead.",
+        });
+      }
+    })();
+    // eslint-disable-next-line
+  }, []);
 
   return (
     <div className="page-fade min-h-screen bg-parchment font-body">

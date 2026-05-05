@@ -196,6 +196,8 @@ export default function PortalLayout({ children }) {
     };
     fetchUnread();
     const t = setInterval(fetchUnread, 30_000);
+    // Best-effort PWA push subscription (silent failure)
+    import("../lib/push").then(({ ensurePushSubscription }) => ensurePushSubscription()).catch(() => {});
     return () => { active = false; clearInterval(t); };
   }, [user]);
 

@@ -89,9 +89,21 @@ export function AuthProvider({ children }) {
     return { user: data.user };
   }
 
+  async function loginWithGoogleSession(sessionId) {
+    const { data } = await api.post("/auth/google/session", null, {
+      headers: { "X-Session-ID": sessionId },
+    });
+    localStorage.setItem(LS.access, data.access_token);
+    localStorage.setItem(LS.refresh, data.refresh_token);
+    localStorage.setItem(LS.user, JSON.stringify(data.user));
+    touchActivity();
+    setUser(data.user);
+    return { user: data.user };
+  }
+
   return (
     <AuthContext.Provider
-      value={{ user, loading, logout, loginWithPassword, registerNew, refreshMe, setUser }}
+      value={{ user, loading, logout, loginWithPassword, registerNew, refreshMe, setUser, loginWithGoogleSession }}
     >
       {children}
     </AuthContext.Provider>

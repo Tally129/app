@@ -7,6 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorGridFSBucket
 from bson import ObjectId
 import os
 import io
+import json
 import logging
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -720,6 +721,17 @@ async def update_appointment(appt_id: str, payload: AppointmentUpdate, request: 
     else:
         updates = {k: v for k, v in payload.dict().items() if v is not None}
     await db.appointments.update_one({"id": appt_id}, {"$set": updates})
+    # Visit-started push: when telehealth appointment moves to in_session, ping the client
+    if updates.get("status") == "in_session" and a.get("visit_mode") == "telehealth":
+        client_doc = await db.clients.find_one({"id": a.get("client_id")})
+        if client_doc and client_doc.get("user_id"):
+            await push_to_user(
+                client_doc["user_id"],
+                "Your provider is ready",
+                "Tap to join your telehealth visit now.",
+                url=f"/portal/visit/{appt_id}",
+                tag=f"visit-{appt_id}",
+            )
     await log_audit(db, user["id"], user["email"], "appointment.update",
                     resource_type="appointment", resource_id=appt_id,
                     metadata={"fields": list(updates.keys())},
@@ -1552,6 +1564,18 @@ async def post_message(thread_id: str, payload: MessageIn, request: Request, use
         "last_message_at": now,
         "last_message_preview": payload.body[:140],
     }})
+    # Push: notify other thread participants
+    thread = await db.message_threads.find_one({"id": thread_id})
+    sender_name = user.get("full_name") or user.get("email", "")
+    for pid in (thread or {}).get("participant_ids", []):
+        if pid != user["id"]:
+            await push_to_user(
+                pid,
+                f"New message from {sender_name}",
+                payload.body[:120],
+                url="/portal/patient/messages" if (await db.users.find_one({"id": pid}) or {}).get("role") == "client" else "/portal/provider/messages",
+                tag=f"msg-{thread_id}",
+            )
     await log_audit(db, user["id"], user["email"], "message.send",
                     resource_type="thread", resource_id=thread_id,
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
@@ -1796,6 +1820,16 @@ async def pos_checkout(payload: PosCheckoutIn, request: Request,
                         "payload": {"item_id": line.ref_id, "stock": new_stock},
                         "_stubbed": True, "ts": datetime.now(timezone.utc),
                     })
+                    # Push admins/staff
+                    admins = await db.users.find({"role": {"$in": ["admin", "staff"]}}).to_list(50)
+                    for u in admins:
+                        await push_to_user(
+                            u["id"],
+                            "Low stock alert",
+                            f"{inv.get('name','item')} now at {new_stock} (threshold {inv.get('low_stock_threshold',5)})",
+                            url="/portal/admin/inventory",
+                            tag=f"lowstock-{line.ref_id}",
+                        )
     discount = max(0.0, payload.discount or 0.0)
     tip = max(0.0, payload.tip or 0.0)
     after_discount = max(0.0, subtotal - discount)
@@ -2811,59 +2845,6 @@ async def list_expiring(days: int = 60,
     return out
 
 
-# ---------- Commission split ----------
-@api.put("/treatments/{tx_id}/commission")
-async def set_treatment_commission(tx_id: str, payload: dict,
-                                    user=Depends(require_roles("admin"))):
-    """Set per-practitioner commission %. Body: {commissions: [{practitioner_id, percent}]}"""
-    items = payload.get("commissions") or []
-    cleaned = []
-    for c in items:
-        pct = float(c.get("percent", 0))
-        cleaned.append({
-            "practitioner_id": c.get("practitioner_id"),
-            "percent": max(0.0, min(100.0, pct)),
-        })
-    await db.treatments.update_one({"id": tx_id}, {"$set": {"commissions": cleaned}})
-    return {"commissions": cleaned}
-
-
-@api.get("/reports/commissions")
-async def commission_report(days: int = 30,
-                             user=Depends(require_roles("admin"))):
-    """Per-practitioner commission earned from POS treatment lines in the window."""
-    end = datetime.now(timezone.utc)
-    start = end - timedelta(days=days)
-    txns = await db.transactions.find(
-        {"status": "paid", "created_at": {"$gte": start, "$lt": end}}
-    ).to_list(2000)
-    treatments = await db.treatments.find().to_list(500)
-    tx_map = {t["id"]: t for t in treatments}
-    users = await db.users.find({"role": {"$in": ["practitioner", "admin"]}}).to_list(500)
-    pname = {u["id"]: u.get("full_name", u["email"]) for u in users}
-
-    earnings = {}
-    for t in txns:
-        for line in t.get("lines", []) or []:
-            if line.get("type") != "treatment":
-                continue
-            tx = tx_map.get(line.get("ref_id"))
-            if not tx:
-                continue
-            line_total = (line.get("line_total")
-                          or (line.get("qty", 1) * line.get("unit_price", 0)))
-            for c in tx.get("commissions", []) or []:
-                pid = c.get("practitioner_id")
-                if not pid:
-                    continue
-                amt = round(line_total * (c.get("percent", 0) / 100.0), 2)
-                earnings.setdefault(pid, {"practitioner_id": pid, "name": pname.get(pid, pid),
-                                          "earned": 0.0, "lines": 0})
-                earnings[pid]["earned"] = round(earnings[pid]["earned"] + amt, 2)
-                earnings[pid]["lines"] += 1
-    return {"window_days": days, "earnings": sorted(earnings.values(), key=lambda x: -x["earned"])}
-
-
 # ---------- Web push (VAPID) ----------
 @api.get("/push/public-key")
 async def push_public_key():
@@ -2895,6 +2876,181 @@ async def push_unsubscribe(payload: dict, user=Depends(get_current_user)):
     return {"ok": True}
 
 
+# ---------- Push broadcast helper ----------
+def _send_push_to_user(sub_doc, payload):
+    try:
+        from pywebpush import webpush, WebPushException
+        webpush(
+            subscription_info={
+                "endpoint": sub_doc["endpoint"],
+                "keys": sub_doc.get("keys", {}),
+            },
+            data=json.dumps(payload),
+            vapid_private_key=os.environ.get("VAPID_PRIVATE_KEY", ""),
+            vapid_claims={"sub": os.environ.get("VAPID_CONTACT", "mailto:admin@natmedsol.local")},
+            ttl=60 * 60 * 24,
+        )
+        return True
+    except Exception as e:
+        logger.info("push send failed for %s: %s", sub_doc.get("endpoint", "?")[:40], e)
+        return False
+
+
+async def push_to_user(user_id, title, body, url="/portal", tag=None):
+    """Best-effort push to all active subscriptions for a user. Drops 404/410 endpoints."""
+    if not os.environ.get("VAPID_PRIVATE_KEY"):
+        return 0
+    subs = await db.push_subscriptions.find({"user_id": user_id}).to_list(20)
+    sent = 0
+    payload = {"title": title, "body": body, "url": url, "tag": tag or title}
+    dead = []
+    for s in subs:
+        ok = _send_push_to_user(s, payload)
+        if ok:
+            sent += 1
+        else:
+            dead.append(s["endpoint"])
+    # cleanup dead endpoints
+    if dead:
+        await db.push_subscriptions.delete_many({"endpoint": {"$in": dead}})
+    return sent
+
+
+# ---------- Background scheduler: appointment reminders ----------
+import asyncio as _asyncio
+
+async def _appointment_reminder_loop():
+    """Fires every 5 minutes, sends a push to clients ~1 hour before their appointment.
+    Uses a `reminder_sent_at` flag so each appointment is reminded once."""
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            window_start = now + timedelta(minutes=55)
+            window_end = now + timedelta(minutes=65)
+            cursor = db.appointments.find({
+                "start": {"$gte": window_start, "$lte": window_end},
+                "status": {"$in": ["scheduled", "confirmed", "requested"]},
+                "reminder_sent_at": {"$exists": False},
+            })
+            async for a in cursor:
+                client = await db.clients.find_one({"id": a.get("client_id")})
+                if not client or not client.get("user_id"):
+                    continue
+                start_local = a["start"].strftime("%-I:%M %p")
+                mode = "Telehealth" if a.get("visit_mode") == "telehealth" else "In clinic"
+                url = f"/portal/visit/{a['id']}" if a.get("visit_mode") == "telehealth" else "/portal/patient/appointments"
+                await push_to_user(
+                    client["user_id"],
+                    "Appointment in 1 hour",
+                    f"{mode} visit at {start_local}",
+                    url=url, tag=f"appt-{a['id']}",
+                )
+                await db.appointments.update_one(
+                    {"id": a["id"]},
+                    {"$set": {"reminder_sent_at": now}},
+                )
+        except Exception as e:
+            logger.warning("reminder loop tick failed: %s", e)
+        await _asyncio.sleep(300)  # 5 min
+
+
+async def _expiring_inventory_loop():
+    """Once per day, push admins about lots expiring within 30 days."""
+    while True:
+        try:
+            cutoff = (datetime.now(timezone.utc) + timedelta(days=30)).date().isoformat()
+            items = await db.inventory_items.find({}).to_list(500)
+            expiring = []
+            for it in items:
+                for lot in it.get("lots", []) or []:
+                    if lot.get("expires_on") and lot["expires_on"] <= cutoff:
+                        expiring.append(it["name"])
+                        break
+            if expiring:
+                admins = await db.users.find({"role": {"$in": ["admin", "staff"]}}).to_list(50)
+                for u in admins:
+                    await push_to_user(
+                        u["id"],
+                        f"{len(expiring)} inventory item(s) expiring soon",
+                        ", ".join(expiring[:3]) + ("…" if len(expiring) > 3 else ""),
+                        url="/portal/admin/inventory", tag="inv-expiring",
+                    )
+        except Exception as e:
+            logger.warning("expiring loop tick failed: %s", e)
+        await _asyncio.sleep(60 * 60 * 24)  # daily
+
+
+# ---------- Emergent-managed Google SSO ----------
+import httpx as _httpx
+
+@api.post("/auth/google/session")
+async def google_session_exchange(request: Request):
+    """Exchange Emergent Auth session_id (header X-Session-ID) for our internal JWT."""
+    session_id = request.headers.get("X-Session-ID") or request.headers.get("x-session-id")
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Missing X-Session-ID header")
+    async with _httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            r = await client.get(
+                "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+                headers={"X-Session-ID": session_id},
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Auth provider unreachable: {e}")
+    if r.status_code != 200:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    data = r.json()
+    email = (data.get("email") or "").lower().strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="No email returned by auth provider")
+
+    user = await db.users.find_one({"email": email})
+    if not user:
+        # Auto-create new client account
+        user = {
+            "id": new_id(),
+            "email": email,
+            "full_name": data.get("name") or email.split("@")[0],
+            "role": "client",
+            "active": True,
+            "auth_provider": "google",
+            "picture_url": data.get("picture"),
+            "created_at": datetime.now(timezone.utc),
+        }
+        await db.users.insert_one(user)
+        # also create a Clients row so /clients/me works
+        await db.clients.insert_one({
+            "id": new_id(), "user_id": user["id"],
+            "full_name": user["full_name"], "email": email,
+            "intake_completed": False,
+            "created_at": datetime.now(timezone.utc),
+        })
+    elif not user.get("active", True):
+        raise HTTPException(status_code=403, detail="Account disabled")
+    else:
+        # Update profile picture / link google
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {"auth_provider": "google", "picture_url": data.get("picture")}},
+        )
+
+    access = make_access_token(user["id"], user["role"])
+    refresh = make_refresh_token(user["id"])
+    await log_audit(db, user["id"], user["email"], "auth.login_google",
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return {
+        "access_token": access,
+        "refresh_token": refresh,
+        "user": {
+            "id": user["id"],
+            "email": user["email"],
+            "full_name": user.get("full_name"),
+            "role": user["role"],
+            "picture_url": user.get("picture_url"),
+        },
+    }
+
+
 # =================== STARTUP ===================
 @app.on_event("startup")
 async def seed_demo():
@@ -2906,8 +3062,13 @@ async def seed_demo():
         await db.files.create_index("client_id")
         await db.audit_logs.create_index("ts")
         await db.ws_tickets.create_index("expires_at", expireAfterSeconds=0)
+        await db.push_subscriptions.create_index([("user_id", 1), ("endpoint", 1)], unique=True)
     except Exception as e:
         logger.warning("Index creation warning: %s", e)
+
+    # Background tasks for push triggers
+    _asyncio.create_task(_appointment_reminder_loop())
+    _asyncio.create_task(_expiring_inventory_loop())
 
     if await db.users.count_documents({}) == 0:
         admin = {
