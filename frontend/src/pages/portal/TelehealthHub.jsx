@@ -1,5 +1,5 @@
 import React from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import PortalLayout, { PortalHeader, StatCard } from "../PortalLayout";
 import api, { API_BASE, LS } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
@@ -256,6 +256,7 @@ function Diag({ label, value, ok, warn, fail }) {
 
 function InstantVisitDialog({ open, onOpenChange, onCreated }) {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [clients, setClients] = React.useState([]);
   const [form, setForm] = React.useState({ client_id: "", reason: "", duration: 30 });
   const [submitting, setSubmitting] = React.useState(false);
@@ -277,8 +278,8 @@ function InstantVisitDialog({ open, onOpenChange, onCreated }) {
       toast({ title: "Instant visit started" });
       onOpenChange(false);
       onCreated && onCreated();
-      // Open the visit immediately
-      window.location.href = `/portal/visit/${r.data.id}`;
+      // Open the visit immediately (preserve auth context via React Router)
+      navigate(`/portal/visit/${r.data.id}`);
     } catch (e) {
       toast({ title: "Failed to start", description: e?.response?.data?.detail || "" });
     } finally { setSubmitting(false); }

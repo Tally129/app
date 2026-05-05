@@ -3088,6 +3088,17 @@ async def seed_demo():
         await db.users.insert_many([admin, prac])
         logger.info("Seeded demo admin + practitioner users.")
 
+    # Idempotent: ensure a real staff-role front-desk user exists for QA / RBAC testing
+    if not await db.users.find_one({"email": "frontdesk@natmedsol.local"}):
+        await db.users.insert_one({
+            "id": new_id(), "email": "frontdesk@natmedsol.local",
+            "password_hash": hash_password("FrontDesk!2345"),
+            "full_name": "Front Desk Staff", "phone": None,
+            "role": "staff", "mfa_enabled": False, "mfa_secret": None,
+            "is_active": True, "created_at": datetime.now(timezone.utc), "last_login_at": None,
+        })
+        logger.info("Seeded demo staff (front desk) user.")
+
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

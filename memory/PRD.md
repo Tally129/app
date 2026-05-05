@@ -46,11 +46,21 @@ JWT+RBAC+MFA+audit, intake, SOAP, GridFS files, appointments+availability, remin
 - **Critical bug fix from tester** — `AppointmentStatus` Literal extended to include `scheduled`, `arrived`, `in_session`. Previously the EHR Start-visit button + visit-started push were dead code (Pydantic 422'd). Now functional.
 - **PWA push subscribe flow** — `/app/frontend/src/lib/push.js` ensures every authenticated user is subscribed (best-effort, silent failure).
 
+### Phase 9 — Dedicated Telehealth Hub & Staff Portal (May 5, 2026) ⭐ NEW
+- **Dedicated `/staff-login`** — separate dark-themed sign-in for staff/practitioners/admins (still routes back to `/login` for clients). All four roles can sign in at either URL.
+- **Telehealth Hub** at `/portal/{role}/telehealth` — single-purpose page with tabs for Upcoming · Active · History · Equipment test, plus an Instant-visit dialog (provider+ only). Stat cards for Active now / Starting within 1h / Upcoming total. STUN/TURN/Browser/Push diagnostics in Equipment tab.
+- **Staff Dashboard** at `/portal/staff` — front-desk-first KPIs (In clinic, Walk-ins, Completed today, Revenue), quick check-in, POS, Up Next, Time Clock, Low-stock and Expiring rails.
+- **Admin Telehealth nav link** added to admin sidebar Today group.
+- **Idempotent staff seed** — `frontdesk@natmedsol.local` / `FrontDesk!2345` (role=staff) auto-seeded for QA.
+- **InstantVisitDialog** now uses `useNavigate` (SPA route) instead of `window.location.href` so auth context survives.
+- **Carry-over fixes**: AppointmentIn + AppointmentUpdate validated to accept `status="in_session"` on both POST and PUT (regression confirmed by iter7 testing agent).
+
 ### Quality Gates
-- 109/110 backend pytest pass (1 environmental skip)
+- 109/110 backend pytest pass (1 environmental skip) + 13/13 new Phase 9 pytest in `/app/backend/tests/test_phase9.py`
+- iter7 testing agent: 4/4 Phase 9 carry-overs ✅, RBAC sidebar ✅, regression smoke ✅
 - HIPAA red banner permanent
 - RBAC verified across every endpoint
-- Audit logging on all mutations (incl. telehealth WS, recordings, recurrence, commission already removed)
+- Audit logging on all mutations
 
 ## Test Credentials
 See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST123` (admin).
@@ -91,4 +101,4 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 - Service worker registers only in production builds
 - `TEST123` is 7 chars — predates 8-char policy
 
-_Last updated: May 5, 2026 (Phase 8)_
+_Last updated: May 5, 2026 (Phase 9 — Telehealth Hub + Staff Portal)_
