@@ -6,7 +6,7 @@ import { useAuth } from "../../lib/auth";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../../components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { Textarea } from "../../components/ui/textarea";
 import { Label } from "../../components/ui/label";
 import { useToast } from "../../hooks/use-toast";
@@ -191,7 +191,10 @@ export default function ProviderSchedule() {
       {/* Create Dialog */}
       <Dialog open={openNew} onOpenChange={setOpenNew}>
         <DialogContent className="bg-[#fbf7ee] border-[#e7dfc9]">
-          <DialogHeader><DialogTitle className="font-display text-2xl">New appointment</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl">New appointment</DialogTitle>
+            <DialogDescription>Schedule an in-clinic or telehealth visit.</DialogDescription>
+          </DialogHeader>
           <div className="space-y-3">
             <div className="text-sm text-[#6a6a6a]">{newSlot?.date?.toLocaleString()}</div>
             <div><Label>Client</Label>
@@ -226,7 +229,10 @@ export default function ProviderSchedule() {
       {/* Edit Dialog */}
       <Dialog open={!!editing} onOpenChange={() => setEditing(null)}>
         <DialogContent className="bg-[#fbf7ee] border-[#e7dfc9]">
-          <DialogHeader><DialogTitle className="font-display text-2xl">Appointment</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl">Appointment</DialogTitle>
+            <DialogDescription>Review or update visit details.</DialogDescription>
+          </DialogHeader>
           {editing && (
             <div className="space-y-3 text-sm">
               <div><span className="text-[#6a6a6a]">Client:</span> {editing.client_name}</div>

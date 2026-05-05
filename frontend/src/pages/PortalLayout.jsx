@@ -32,6 +32,8 @@ import {
   Wallet,
   Briefcase,
   UserCircle,
+  BarChart3,
+  Home,
 } from "lucide-react";
 
 // =============== NAV CONFIG (grouped) ===============
@@ -88,6 +90,7 @@ const NAV = {
       items: [
         { to: "/portal/provider/availability", label: "Availability", icon: Clock },
         { to: "/portal/provider/treatments", label: "Treatments", icon: Stethoscope },
+        { to: "/portal/provider/analytics", label: "Analytics", icon: BarChart3 },
       ],
     },
     {
@@ -157,6 +160,7 @@ const NAV = {
         { to: "/portal/admin/transactions", label: "Transactions", icon: Wallet },
         { to: "/portal/admin/inventory", label: "Inventory", icon: Boxes },
         { to: "/portal/admin/treatments", label: "Treatments", icon: Stethoscope },
+        { to: "/portal/admin/analytics", label: "Analytics", icon: BarChart3 },
       ],
     },
     {
@@ -297,10 +301,47 @@ export default function PortalLayout({ children }) {
               <LogOut size={18} />
             </button>
           </div>
-          <main className="p-6 md:p-10 max-w-6xl mx-auto page-fade">{children}</main>
+          <main className="p-6 md:p-10 max-w-6xl mx-auto page-fade pb-24 md:pb-10">{children}</main>
         </div>
       </div>
+
+      {/* Mobile bottom nav (PWA-style) for clients only */}
+      {user?.role === "client" && (
+        <nav
+          className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#fbf7ee] border-t border-[#e7dfc9] flex justify-around py-2 pb-[env(safe-area-inset-bottom)]"
+          data-testid="mobile-bottom-nav"
+        >
+          <BottomLink to="/portal/patient" icon={Home} label="Home" exact />
+          <BottomLink to="/portal/patient/appointments" icon={CalendarDays} label="Visits" />
+          <BottomLink to="/portal/patient/messages" icon={MessageSquare} label="Messages" badge={unread} />
+          <BottomLink to="/portal/patient/chart" icon={FileText} label="Chart" />
+          <BottomLink to="/portal/patient/account" icon={UserCircle} label="Me" />
+        </nav>
+      )}
     </div>
+  );
+}
+
+function BottomLink({ to, icon: Icon, label, exact, badge }) {
+  return (
+    <NavLink
+      to={to}
+      end={exact}
+      className={({ isActive }) =>
+        `flex flex-col items-center gap-0.5 flex-1 py-1 text-[10px] uppercase tracking-wider relative ${
+          isActive ? "text-[#2f4a3a]" : "text-[#6a6a6a]"
+        }`
+      }
+      data-testid={`mobile-nav-${label.toLowerCase()}`}
+    >
+      <Icon size={20} />
+      <span>{label}</span>
+      {badge > 0 && (
+        <span className="absolute top-0 right-1/4 inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-[#c19a4b] text-[#1f2a22] text-[9px] font-semibold">
+          {badge}
+        </span>
+      )}
+    </NavLink>
   );
 }
 

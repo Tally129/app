@@ -2137,6 +2137,108 @@ async def import_clients(
 
 
 
+# ---------- Provider Analytics ----------
+@api.get("/analytics/overview")
+async def analytics_overview(
+    days: int = 30,
+    user=Depends(require_roles("practitioner", "admin", "staff")),
+):
+    """KPI overview for the practice (last N days)."""
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+
+    # Revenue from transactions
+    txns = await db.transactions.find({
+        "status": "paid",
+        "created_at": {"$gte": start, "$lt": end},
+    }).to_list(2000)
+    total_revenue = round(sum(t.get("total", 0) for t in txns), 2)
+    revenue_by_method = {}
+    for t in txns:
+        m = t.get("payment_method", "other")
+        revenue_by_method[m] = round(revenue_by_method.get(m, 0) + (t.get("total", 0) or 0), 2)
+
+    # Daily revenue series
+    by_day = {}
+    for t in txns:
+        d = t["created_at"].date().isoformat()
+        by_day[d] = round(by_day.get(d, 0) + (t.get("total", 0) or 0), 2)
+    revenue_series = [{"date": d, "revenue": by_day[d]} for d in sorted(by_day)]
+
+    # Appointments
+    appts = await db.appointments.find({
+        "start_time": {"$gte": start, "$lt": end},
+    }).to_list(2000)
+    no_show = [a for a in appts if a.get("status") == "no_show"]
+    completed = [a for a in appts if a.get("status") in ("completed", "checked_out")]
+    avg_duration = 0
+    if completed:
+        durations = []
+        for a in completed:
+            if a.get("start_time") and a.get("end_time"):
+                durations.append((a["end_time"] - a["start_time"]).total_seconds() / 60)
+        if durations:
+            avg_duration = round(sum(durations) / len(durations), 1)
+
+    # Top treatments by line revenue
+    line_rev = {}
+    line_count = {}
+    for t in txns:
+        for line in t.get("lines", []) or []:
+            if line.get("type") == "treatment":
+                key = line.get("name", "Unknown")
+                line_rev[key] = round(line_rev.get(key, 0) + (line.get("line_total", 0) or 0), 2)
+                line_count[key] = line_count.get(key, 0) + (line.get("qty", 1) or 1)
+    top_treatments = sorted(
+        [{"name": k, "revenue": line_rev[k], "count": line_count.get(k, 0)} for k in line_rev],
+        key=lambda x: x["revenue"], reverse=True
+    )[:8]
+
+    # New clients in window
+    new_clients = await db.clients.count_documents({"created_at": {"$gte": start, "$lt": end}})
+
+    # Active practitioners (with >=1 note in window)
+    notes = await db.visit_notes.find({"created_at": {"$gte": start, "$lt": end}}).to_list(2000)
+    by_provider = {}
+    for n in notes:
+        pid = n.get("provider_id") or "unknown"
+        by_provider[pid] = by_provider.get(pid, 0) + 1
+    notes_by_provider = []
+    for pid, cnt in sorted(by_provider.items(), key=lambda x: x[1], reverse=True):
+        u = await db.users.find_one({"id": pid})
+        notes_by_provider.append({
+            "provider_id": pid,
+            "provider_name": u.get("full_name") if u else pid,
+            "notes": cnt,
+        })
+
+    # Inventory low-stock count
+    inv = await db.inventory_items.find().to_list(500)
+    low_stock = [i for i in inv if (i.get("stock", 0) or 0) <= (i.get("low_stock_threshold", 5) or 5)]
+
+    return {
+        "window_days": days,
+        "from": start.isoformat(),
+        "to": end.isoformat(),
+        "revenue": {
+            "total": total_revenue,
+            "by_method": revenue_by_method,
+            "series": revenue_series,
+        },
+        "appointments": {
+            "total": len(appts),
+            "completed": len(completed),
+            "no_shows": len(no_show),
+            "no_show_rate": round((len(no_show) / len(appts) * 100), 1) if appts else 0,
+            "avg_duration_min": avg_duration,
+        },
+        "clients": {"new_clients": new_clients},
+        "top_treatments": top_treatments,
+        "notes_by_provider": notes_by_provider[:10],
+        "low_stock_items": len(low_stock),
+    }
+
+
 # =================== STARTUP ===================
 @app.on_event("startup")
 async def seed_demo():

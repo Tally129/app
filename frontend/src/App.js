@@ -35,6 +35,7 @@ import TimeClock from "./pages/portal/TimeClock";
 import Inventory from "./pages/portal/Inventory";
 import Transactions from "./pages/portal/Transactions";
 import ImportClients from "./pages/portal/ImportClients";
+import Analytics from "./pages/portal/Analytics";
 import { Toaster } from "./components/ui/toaster";
 import { AuthProvider } from "./lib/auth";
 import { Protected } from "./lib/Protected";
@@ -103,6 +104,8 @@ function App() {
             <Route path="/portal/admin/transactions" element={<Protected roles={["admin"]}><Transactions /></Protected>} />
             <Route path="/portal/admin/inventory" element={<Protected roles={["admin"]}><Inventory /></Protected>} />
             <Route path="/portal/admin/import-clients" element={<Protected roles={["admin"]}><ImportClients /></Protected>} />
+            <Route path="/portal/admin/analytics" element={<Protected roles={["admin"]}><Analytics /></Protected>} />
+            <Route path="/portal/provider/analytics" element={<Protected roles={["practitioner", "admin"]}><Analytics /></Protected>} />
           </Routes>
           <Toaster />
         </AuthProvider>

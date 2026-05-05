@@ -4,7 +4,7 @@ import api from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../../components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { useToast } from "../../hooks/use-toast";
 import { Plus, Pencil, AlertTriangle, Boxes, Sliders } from "lucide-react";
 
@@ -138,7 +138,10 @@ export default function Inventory() {
 
       <Dialog open={!!edit} onOpenChange={(o) => !o && setEdit(null)}>
         <DialogContent className="bg-[#fbf7ee] border-[#e7dfc9]">
-          <DialogHeader><DialogTitle>{edit === "new" ? "New inventory item" : "Edit item"}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{edit === "new" ? "New inventory item" : "Edit item"}</DialogTitle>
+            <DialogDescription>Stock items decrement automatically on POS sale.</DialogDescription>
+          </DialogHeader>
           <div className="grid md:grid-cols-2 gap-4">
             <div className="md:col-span-2"><Label>Name</Label><Input className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="inv-name" /></div>
             <div><Label>SKU</Label><Input className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]" value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} /></div>
@@ -157,7 +160,10 @@ export default function Inventory() {
 
       <Dialog open={!!adjust} onOpenChange={(o) => !o && setAdjust(null)}>
         <DialogContent className="bg-[#fbf7ee] border-[#e7dfc9]">
-          <DialogHeader><DialogTitle>Adjust stock — {adjust?.name}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Adjust stock — {adjust?.name}</DialogTitle>
+            <DialogDescription>Record a manual stock change (restock, shrinkage, count).</DialogDescription>
+          </DialogHeader>
           <div className="space-y-4">
             <div className="text-sm text-[#6a6a6a]">Current stock: <strong>{adjust?.stock}</strong></div>
             <div><Label>Change (use negative for shrinkage)</Label><Input type="number" className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]" value={adjustForm.delta} onChange={(e) => setAdjustForm({ ...adjustForm, delta: e.target.value })} data-testid="inv-adjust-delta" /></div>

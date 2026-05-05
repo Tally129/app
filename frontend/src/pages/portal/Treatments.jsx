@@ -4,7 +4,7 @@ import api from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../../components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { useToast } from "../../hooks/use-toast";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 
@@ -109,7 +109,10 @@ export default function Treatments() {
 
       <Dialog open={!!edit} onOpenChange={(o) => !o && setEdit(null)}>
         <DialogContent className="bg-[#fbf7ee] border-[#e7dfc9]">
-          <DialogHeader><DialogTitle>{edit === "new" ? "New treatment" : "Edit treatment"}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{edit === "new" ? "New treatment" : "Edit treatment"}</DialogTitle>
+            <DialogDescription>Catalog details for the practice's bookable services.</DialogDescription>
+          </DialogHeader>
           <div className="grid md:grid-cols-2 gap-4">
             <div className="md:col-span-2"><Label>Name</Label><Input className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} data-testid="tx-name" /></div>
             <div><Label>Category</Label><Input className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} data-testid="tx-category" /></div>

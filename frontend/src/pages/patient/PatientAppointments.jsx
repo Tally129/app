@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import PortalLayout, { PortalHeader } from "../PortalLayout";
 import api from "../../lib/api";
 import { Button } from "../../components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../../components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { Label } from "../../components/ui/label";
 import { useToast } from "../../hooks/use-toast";
@@ -127,7 +127,10 @@ export default function PatientAppointments() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="bg-[#fbf7ee] border-[#e7dfc9]">
-          <DialogHeader><DialogTitle className="font-display text-2xl">Book a visit</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl">Book a visit</DialogTitle>
+            <DialogDescription>Choose a practitioner, date, and reason for your appointment.</DialogDescription>
+          </DialogHeader>
           <div className="space-y-3">
             <div>
               <Label>Visit type</Label>
