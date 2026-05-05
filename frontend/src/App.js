@@ -33,6 +33,8 @@ import FormResponder from "./pages/FormResponder";
 import SoapNotes from "./pages/portal/SoapNotes";
 import Protocols from "./pages/portal/Protocols";
 import PatientProtocols from "./pages/patient/PatientProtocols";
+import DocumentLibrary from "./pages/admin/DocumentLibrary";
+import PushOptInBanner from "./components/PushOptInBanner";
 import TelehealthVisit from "./pages/TelehealthVisit";
 import MyAccount from "./pages/portal/MyAccount";
 import FrontDesk from "./pages/portal/FrontDesk";
@@ -56,6 +58,7 @@ function App() {
     <div className="App">
       <BrowserRouter>
         <AuthProvider>
+          <PushOptInBanner />
           <Routes>
             {/* Public marketing */}
             <Route path="/" element={<Home />} />
@@ -150,6 +153,10 @@ function App() {
             <Route path="/portal/provider/protocols" element={<Protected roles={["admin", "practitioner", "staff"]}><Protocols /></Protected>} />
             {/* Patient self-service */}
             <Route path="/portal/patient/protocols" element={<Protected roles={["client"]}><PatientProtocols /></Protected>} />
+            {/* Document Library — universal AI ingest */}
+            <Route path="/portal/admin/library" element={<Protected roles={["admin", "practitioner", "staff"]}><DocumentLibrary /></Protected>} />
+            <Route path="/portal/staff/library" element={<Protected roles={["admin", "practitioner", "staff"]}><DocumentLibrary /></Protected>} />
+            <Route path="/portal/provider/library" element={<Protected roles={["admin", "practitioner", "staff"]}><DocumentLibrary /></Protected>} />
             <Route path="/portal/provider/analytics" element={<Protected roles={["practitioner", "admin"]}><Analytics /></Protected>} />
 
             {/* Public form responder (token-based, no login required) */}

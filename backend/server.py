@@ -2601,6 +2601,71 @@ async def upload_visit_recording(
     return {"file_id": fid, "size": len(contents)}
 
 
+@api.get("/visits/{appt_id}/recordings")
+async def list_visit_recordings(appt_id: str, user=Depends(get_current_user)):
+    """List recordings attached to an appointment."""
+    a = await db.appointments.find_one({"id": appt_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if user["role"] == "client":
+        sc = await _resolve_self_client(user)
+        if not sc or a.get("client_id") != sc["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    out = []
+    for r in (a.get("recordings") or []):
+        out.append({
+            "file_id": r.get("file_id"),
+            "size": r.get("size"),
+            "ts": r.get("ts"),
+            "uploaded_by": r.get("uploaded_by"),
+            "download_url": f"/api/visits/{appt_id}/recordings/{r.get('file_id')}",
+        })
+    return out
+
+
+@api.get("/visits/{appt_id}/recordings/{file_id}")
+async def download_visit_recording(appt_id: str, file_id: str, request: Request,
+                                   user=Depends(get_current_user)):
+    """Stream a recorded visit WebM from GridFS. RBAC: client may only access their own."""
+    a = await db.appointments.find_one({"id": appt_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if user["role"] == "client":
+        sc = await _resolve_self_client(user)
+        if not sc or a.get("client_id") != sc["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    # Confirm file is bound to this appointment via metadata
+    try:
+        oid = ObjectId(file_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid file id")
+    found = None
+    for r in (a.get("recordings") or []):
+        if r.get("file_id") == file_id:
+            found = r
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    try:
+        stream = await fs_bucket.open_download_stream(oid)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Recording not found in GridFS")
+    await log_audit(db, user["id"], user["email"], "telehealth.recording_download",
+                    resource_type="appointment", resource_id=appt_id,
+                    metadata={"file_id": file_id},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+
+    async def _iter():
+        while True:
+            chunk = await stream.readchunk()
+            if not chunk:
+                break
+            yield chunk
+
+    return StreamingResponse(_iter(), media_type="video/webm",
+                             headers={"Content-Disposition": f'attachment; filename="visit-{appt_id}.webm"'})
+
+
 # ---------- WS auth hardening: one-shot signed handshake ticket ----------
 import secrets as _secrets
 
@@ -3343,14 +3408,48 @@ async def send_form(payload: FormSendIn, request: Request,
         "submitted_at": None,
         "created_at": now,
         "note": payload.note or None,
+        "channel": payload.channel or "link",
+        "delivery_target": payload.delivery_target or None,
+        "delivery_status": "pending",
     }
     await db.form_submissions.insert_one(doc)
     await log_audit(db, user["id"], user["email"], "form.send",
                     resource_type="form_submission", resource_id=doc["id"],
-                    metadata={"template_id": tpl["id"], "client_id": (client or {}).get("id")},
+                    metadata={"template_id": tpl["id"], "client_id": (client or {}).get("id"), "channel": doc["channel"]},
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+
+    # Compose absolute submit URL using request origin
+    base_url = os.environ.get("PUBLIC_BASE_URL", "") or str(request.base_url).rstrip("/").replace("/api", "")
+    submit_url = f"{base_url}/forms/respond/{token}"
+
+    delivery_status = "skipped"
+    target = payload.delivery_target
+    if (payload.channel or "link") == "email" and not target:
+        target = (client or {}).get("email")
+    if (payload.channel or "link") == "sms" and not target:
+        target = (client or {}).get("phone")
+
+    if payload.channel == "email" and target:
+        await db.integration_log.insert_one({
+            "id": new_id(), "service": "sendgrid", "action": "form.email",
+            "payload": {"to": target, "subject": f"Please complete: {tpl.get('title','')}", "submission_id": doc["id"], "submit_url": submit_url},
+            "_stubbed": True, "ts": now,
+        })
+        delivery_status = "sent_stub"
+    elif payload.channel == "sms" and target:
+        await db.integration_log.insert_one({
+            "id": new_id(), "service": "twilio", "action": "form.sms",
+            "payload": {"to": target, "body": f"{tpl.get('title','')} — please complete: {submit_url}", "submission_id": doc["id"]},
+            "_stubbed": True, "ts": now,
+        })
+        delivery_status = "sent_stub"
+
+    await db.form_submissions.update_one({"id": doc["id"]}, {"$set": {"delivery_status": delivery_status, "delivery_target": target}})
+    doc["delivery_status"] = delivery_status
+    doc["delivery_target"] = target
+
     out = _strip_id(doc)
-    out["submit_url"] = f"/forms/respond/{token}"
+    out["submit_url"] = submit_url
     # Best-effort push to client
     if client and client.get("user_id"):
         try:
@@ -3721,6 +3820,208 @@ async def generate_protocol(payload: FormGenerateIn,
     result = await _llm_protocol_transcribe(seed)
     result["source"] = "ai"
     return result
+
+
+# =================== UNIFIED DOCUMENT LIBRARY ===================
+
+
+async def _llm_classify_document(text: str) -> dict:
+    """Use Claude 4.5 to detect what kind of clinical document the staff just dropped in."""
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="LLM key not configured")
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"emergentintegrations unavailable: {e}")
+
+    sys_msg = (
+        "You are a clinical-document triage assistant for a wellness clinic. "
+        "Given the contents of an uploaded document, classify it into ONE of these types:\n"
+        "  • 'form'       — patient consent, HIPAA notice, photo release, intake questionnaire, anything the patient signs/fills.\n"
+        "  • 'protocol'   — multi-week detox/cleanse/treatment plan with sessions, foods, lifestyle.\n"
+        "  • 'soap'       — a SOAP note template with Subjective/Objective/Assessment/Plan sections.\n"
+        "  • 'supplement' — supplement directions / dosing instructions sheet.\n"
+        "  • 'other'      — anything else (lab result, marketing flyer, etc.).\n\n"
+        "Output STRICT JSON only:\n"
+        "{\n"
+        '  "type": "form|protocol|soap|supplement|other",\n'
+        '  "confidence": 0.0-1.0,\n'
+        '  "title_guess": "short title",\n'
+        '  "reasoning": "1-2 sentences explaining the classification",\n'
+        '  "subcategory": "consent|intake|hipaa|photo_release|treatment|null"\n'
+        "}\n"
+        "No markdown. JSON only."
+    )
+
+    chat = LlmChat(
+        api_key=api_key,
+        session_id=f"doc-classify-{new_id()[:8]}",
+        system_message=sys_msg,
+    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+    response = await chat.send_message(UserMessage(text=f"Document text:\n\n{text[:15000]}"))
+
+    import re as _re
+    m = _re.search(r"\{.*\}", response, _re.DOTALL)
+    if not m:
+        return {"type": "other", "confidence": 0.0, "title_guess": "Untitled", "reasoning": "LLM returned no JSON", "subcategory": None}
+    try:
+        data = json.loads(m.group(0))
+    except Exception:
+        return {"type": "other", "confidence": 0.0, "title_guess": "Untitled", "reasoning": "Failed to parse JSON", "subcategory": None}
+    t = data.get("type") or "other"
+    if t not in {"form", "protocol", "soap", "supplement", "other"}:
+        t = "other"
+    return {
+        "type": t,
+        "confidence": float(data.get("confidence") or 0.0),
+        "title_guess": (data.get("title_guess") or "Untitled")[:120],
+        "reasoning": (data.get("reasoning") or "")[:400],
+        "subcategory": data.get("subcategory") or None,
+    }
+
+
+@api.post("/library/classify")
+async def library_classify_document(file: UploadFile = File(...),
+                                    user=Depends(require_roles("admin", "practitioner", "staff"))):
+    """Universal ingest: classify a clinical document then run the right transcription path.
+    Returns a `routed` payload with the destination type + a draft ready to pre-fill."""
+    data = await file.read()
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 8 MB)")
+    text = _extract_text_from_upload(file.filename or "", data)
+    if not text or len(text) < 30:
+        raise HTTPException(status_code=400, detail="Document appears empty after extraction")
+    classification = await _llm_classify_document(text)
+    out = {
+        "filename": file.filename,
+        "size": len(data),
+        "extracted_text_preview": text[:500],
+        "classification": classification,
+        "draft": None,
+    }
+    t = classification["type"]
+    try:
+        if t == "form":
+            out["draft"] = await _llm_form_transcribe(text, hint_category=classification.get("subcategory"))
+        elif t == "protocol":
+            out["draft"] = await _llm_protocol_transcribe(text, hint_title=classification.get("title_guess"))
+        elif t == "soap":
+            out["draft"] = await _llm_soap_template_extract(text, hint_title=classification.get("title_guess"))
+        elif t == "supplement":
+            out["draft"] = await _llm_supplement_extract(text, hint_title=classification.get("title_guess"))
+        else:
+            out["draft"] = {"title": classification.get("title_guess") or "Untitled", "raw_text": text[:4000]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("Library transcription post-classify failed: %s", e)
+        out["draft"] = {"title": classification.get("title_guess") or "Untitled", "raw_text": text[:4000], "error": str(e)}
+    await log_audit(db, user["id"], user["email"], "library.classify",
+                    resource_type="library", metadata={"type": t, "filename": file.filename})
+    return out
+
+
+async def _llm_soap_template_extract(text: str, hint_title: Optional[str] = None) -> dict:
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="LLM key not configured")
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    sys_msg = (
+        "Extract a SOAP note template from this document. Output STRICT JSON only:\n"
+        "{ \"title\": \"...\", \"description\": \"...\", \"subjective\": \"...\", \"objective\": \"...\", \"assessment\": \"...\", \"plan\": \"...\", \"visit_type\": \"telehealth|in_person|null\" }"
+    )
+    chat = LlmChat(api_key=api_key, session_id=f"soap-extract-{new_id()[:8]}", system_message=sys_msg)\
+        .with_model("anthropic", "claude-sonnet-4-5-20250929")
+    response = await chat.send_message(UserMessage(text=f"Source:\n\n{text[:14000]}"))
+    import re as _re
+    m = _re.search(r"\{.*\}", response, _re.DOTALL)
+    if not m:
+        return {"title": hint_title or "SOAP template", "description": "", "subjective": "", "objective": "", "assessment": "", "plan": "", "visit_type": None}
+    try:
+        d = json.loads(m.group(0))
+    except Exception:
+        return {"title": hint_title or "SOAP template", "description": text[:200], "subjective": text[:1000], "objective": "", "assessment": "", "plan": "", "visit_type": None}
+    return {
+        "title": (d.get("title") or hint_title or "SOAP template")[:120],
+        "description": (d.get("description") or "")[:500],
+        "subjective": (d.get("subjective") or "")[:4000],
+        "objective": (d.get("objective") or "")[:4000],
+        "assessment": (d.get("assessment") or "")[:4000],
+        "plan": (d.get("plan") or "")[:4000],
+        "visit_type": d.get("visit_type") if d.get("visit_type") in ("telehealth", "in_person") else None,
+    }
+
+
+async def _llm_supplement_extract(text: str, hint_title: Optional[str] = None) -> dict:
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="LLM key not configured")
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    sys_msg = (
+        "Extract a supplement directions sheet. Output STRICT JSON only:\n"
+        "{ \"title\": \"...\", \"summary\": \"...\", \"items\": [{\"name\":\"...\",\"dose\":\"...\",\"frequency\":\"...\",\"timing\":\"...\",\"notes\":\"...\"}] }"
+    )
+    chat = LlmChat(api_key=api_key, session_id=f"supp-extract-{new_id()[:8]}", system_message=sys_msg)\
+        .with_model("anthropic", "claude-sonnet-4-5-20250929")
+    response = await chat.send_message(UserMessage(text=f"Source:\n\n{text[:14000]}"))
+    import re as _re
+    m = _re.search(r"\{.*\}", response, _re.DOTALL)
+    if not m:
+        return {"title": hint_title or "Supplement directions", "summary": "", "items": []}
+    try:
+        d = json.loads(m.group(0))
+    except Exception:
+        return {"title": hint_title or "Supplement directions", "summary": text[:300], "items": []}
+    items = []
+    for it in (d.get("items") or [])[:50]:
+        if not isinstance(it, dict):
+            continue
+        items.append({
+            "name": str(it.get("name", ""))[:120],
+            "dose": str(it.get("dose", ""))[:80],
+            "frequency": str(it.get("frequency", ""))[:80],
+            "timing": str(it.get("timing", ""))[:80],
+            "notes": str(it.get("notes", ""))[:300],
+        })
+    return {
+        "title": (d.get("title") or hint_title or "Supplement directions")[:120],
+        "summary": (d.get("summary") or "")[:500],
+        "items": items,
+    }
+
+
+# Persisted "Supplement directions" sheets — read-only lightweight CRUD
+@api.post("/library/supplements")
+async def save_supplement_sheet(payload: dict, request: Request,
+                                user=Depends(require_roles("admin", "practitioner", "staff"))):
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": new_id(),
+        "title": str(payload.get("title", "Untitled"))[:120],
+        "summary": str(payload.get("summary", ""))[:500],
+        "items": payload.get("items") or [],
+        "active": True,
+        "created_by": user["id"],
+        "created_by_name": user.get("full_name"),
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.supplement_sheets.insert_one(doc)
+    return _strip_id(doc)
+
+
+@api.get("/library/supplements")
+async def list_supplement_sheets(user=Depends(require_roles("admin", "practitioner", "staff"))):
+    rows = await db.supplement_sheets.find({"active": True}).sort("created_at", -1).to_list(200)
+    return [_strip_id(r) for r in rows]
+
+
+@api.delete("/library/supplements/{sheet_id}")
+async def delete_supplement_sheet(sheet_id: str,
+                                  user=Depends(require_roles("admin", "practitioner"))):
+    await db.supplement_sheets.delete_one({"id": sheet_id})
+    return {"ok": True}
 
 
 @api.post("/protocols/enrollments", response_model=ProtocolEnrollmentOut)

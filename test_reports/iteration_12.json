@@ -1,0 +1,66 @@
+{
+  "summary": "Phase 13 — Document Library + Push opt-in banner + Forms send (channel/email/sms) + Visit recordings + Last-login memory. Found and fixed a CRITICAL ESLint compile error in src/pages/admin/AdminFormsConsents.jsx (a `if (!template) return null` early-return placed BETWEEN two React.useEffect hooks → 'React Hook called conditionally' fatal compile error blocking the entire frontend behind a webpack-dev-server overlay). Moved the early return below all hooks. After the fix, all 12 backend pytest cases pass and all UI checks pass: last-login email memory works on /login and /staff-login; PushOptInBanner renders only when Notification.permission==='default' and the dismiss key is absent (verified by injecting an init script to override Notification.permission), 'push-optin-close' click writes nms_push_optin_dismissed_v1='dismissed' and hides the banner permanently across reloads; Document Library loads at /portal/admin/library with library-drop-zone/library-file-input/library-analyze-btn testids; sidebar 'nav-link-document-library' present for admin/staff/provider; integration_log MongoDB rows confirmed for service=sendgrid action=form.email and service=twilio action=form.sms.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminFormsConsents.jsx::SendFormDialog", "issue": "FIXED by tester — `if (!template) return null;` placed between the first React.useEffect (lines 611-614) and a second React.useEffect at line 618. ESLint react-hooks/rules-of-hooks blocked the build with a hard error (visible as a full-screen webpack-dev-server overlay), so EVERY frontend page (login, portal, library, anything) was unusable. Trivial 4-line refactor: moved the `if (!template) return null;` below both useEffects.", "selector": "N/A (build-time error)", "priority": "CRITICAL (was blocking)"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results_backend": [
+    {"test": "POST /api/library/classify with Detox Protocol DOCX (practitioner) → 200, type=protocol, confidence>0.8, draft.weeks>=1", "result": "PASS"},
+    {"test": "POST /api/library/classify with HIPAA .txt (admin) → 200, type=form, subcategory contains 'hipaa', draft.fields >=1", "result": "PASS"},
+    {"test": "POST /api/library/classify as client → 403", "result": "PASS"},
+    {"test": "POST /api/library/classify as staff → 200", "result": "PASS"},
+    {"test": "POST/GET/DELETE /api/library/supplements (admin)", "result": "PASS"},
+    {"test": "GET /api/library/supplements as practitioner & staff", "result": "PASS"},
+    {"test": "POST /api/forms/send channel=email, target='TEST_…@example.com' → 200 with delivery_status='sent_stub', integration_log {service:sendgrid, action:form.email} created", "result": "PASS"},
+    {"test": "POST /api/forms/send channel=sms, target='+15551234567' → 200 with delivery_status='sent_stub', integration_log {service:twilio, action:form.sms} created", "result": "PASS"},
+    {"test": "POST /api/forms/send channel=link (no target) → 200 with delivery_status='skipped' and submit_url containing /forms/respond/{token}", "result": "PASS"},
+    {"test": "GET /api/visits/{appt_id}/recordings (admin, fresh appt) → 200 []", "result": "PASS"},
+    {"test": "GET /api/visits/{appt_id}/recordings as foreign client → 403", "result": "PASS"},
+    {"test": "GET /api/visits/{appt_id}/recordings/notarealid → 400/404", "result": "PASS"}
+  ],
+  "test_results_frontend": [
+    {"step": "Load /login with cleared localStorage → email field empty", "result": "PASS"},
+    {"step": "Sign in admin → localStorage.nms_last_login_email='admin@natmedsol.local'", "result": "PASS"},
+    {"step": "Re-visit /login → email pre-filled with stored value", "result": "PASS"},
+    {"step": "/staff-login pre-fill from nms_last_login_email after staff login", "result": "PASS (verified field & login flow)"},
+    {"step": "PushOptInBanner: when Notification.permission==='default' (overridden via init script) and dismiss key absent → push-optin-banner visible after ~1.2s delay", "result": "PASS"},
+    {"step": "Click push-optin-close → localStorage.nms_push_optin_dismissed_v1='dismissed' set, banner hidden, stays hidden after reload", "result": "PASS"},
+    {"step": "Banner correctly HIDDEN when Notification.permission==='denied' (default Playwright/Chromium behavior) — by-design", "result": "PASS"},
+    {"step": "/portal/admin/library — library-drop-zone, library-file-input, library-analyze-btn all visible", "result": "PASS"},
+    {"step": "Sidebar nav-link-document-library present for admin", "result": "PASS"},
+    {"step": "Sidebar nav-link-document-library present for staff", "result": "PASS (post wait_for_selector portal-nav)"},
+    {"step": "Sidebar item 'Document Library' visible in provider sidebar after ravello@natmedsol.local login", "result": "PASS (visual + testid generated from label)"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_phase13_library.py",
+    "/app/test_reports/pytest/phase13.xml"
+  ],
+  "action_items": [
+    "Review the 4-line refactor committed by the tester in /app/frontend/src/pages/admin/AdminFormsConsents.jsx (lines 611-625): moved `if (!template) return null;` from line 615 to line 626 so it runs AFTER both useEffects. Add ESLint to CI / pre-commit so a `react-hooks/rules-of-hooks` error never lands on main again — same class of bug shipped in Phase 12 (showAi).",
+    "Consider gating the 'analyze with AI' button on a clientside file size check (server already returns 413 over 8MB) to avoid users waiting and seeing only a generic toast.",
+    "Add a clientside fallback Notification.permission check in PushOptInBanner so dismissed='granted'/'denied' states write to localStorage when Notification.requestPermission resolves — currently those writes only happen inside ensurePushSubscription's success path; if the user clicks Enable but the OS shows a system-level error, no flag is written and the banner returns next session.",
+    "/api/forms/send 'sent_stub' status is identical for SendGrid and Twilio — when real providers are wired up, distinguish 'queued' / 'delivered' / 'failed' in delivery_status so the UI can show actual outcomes instead of always 'EMAIL dispatched (stubbed in dev)'."
+  ],
+  "critical_code_review_comments": [
+    "CRITICAL (already fixed): SendFormDialog had a conditional early-return between two React.useEffect calls — would have been caught by `yarn build` or any dev-time ESLint pass. STRONGLY recommend wiring CRA's lint into a pre-push hook; this is the second hooks-rule regression in two iterations (Phase 12 was missing useState).",
+    "Library classify route is a single 8MB upload limit on the server, but no client-side pre-flight; large PDFs could waste 30s of LLM latency before the 413 surfaces.",
+    "library/supplements DELETE is admin+practitioner only; GET/POST allow staff. If the desire is RBAC-symmetry (whoever can save can delete), consider widening DELETE to staff or narrowing POST to remove staff. Document the asymmetry either way.",
+    "/api/forms/send writes the form_submission first (status='pending'), then the integration_log row, then updates delivery_status — three sequential awaits. Wrap in a transaction or at least a try/except so a failure mid-way doesn't leave 'pending' rows in the DB.",
+    "PushOptInBanner uses setTimeout(1200) but doesn't clear it on user-driven navigation; if the user signs out within 1.2s of login, the timer still fires (though setShow is no-op'd because user becomes null in the next effect — minor)."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/admin/AdminFormsConsents.jsx (moved early return below useEffects — 4-line refactor)",
+    "/app/backend/tests/test_phase13_library.py (new — 12 pytest cases)"
+  ],
+  "success_rate": {"backend": "100% (12/12 pytest)", "frontend": "100% (11/11 UI checks after the rules-of-hooks fix)"},
+  "test_credentials": "admin@natmedsol.local / Admin!2345; ravello@natmedsol.local / Ravello!2345; frontdesk@natmedsol.local / FrontDesk!2345; ephemeral patient via /auth/register (TEST_p13_*)",
+  "seed_data_creation": "Created several TEST_p13_* clients/users via /auth/register and POST /clients during the run; one form_submission per /forms/send test (3 total) and a couple of supplement_sheets (auto-deleted by the CRUD test). All prefixed with TEST_ for easy cleanup.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 13 is GREEN after the AdminFormsConsents.jsx hooks fix. The PushOptInBanner only renders when Notification.permission==='default' and localStorage.nms_push_optin_dismissed_v1 is empty — Playwright/Chromium defaults Notification.permission to 'denied' (NOT 'default'), so to test visibility you MUST add an init script overriding it: `Object.defineProperty(window.Notification,'permission',{get:()=>'default',configurable:true})`. /api/library/classify takes 8-15s for protocols (two LLM calls); use 60-90s timeouts. Detox DOCX fixture URL https://customer-assets.emergentagent.com/job_design-158/artifacts/cwfz3lyv_Detox%20Protocol%20Template.docx is reachable without auth.",
+  "rca of the issue": "RCA — Frontend total outage: developer added a second `React.useEffect` inside SendFormDialog (auto-fill target on channel/client change) but placed it AFTER the existing `if (!template) return null;` guard. CRA's eslint-config-react-app treats `react-hooks/rules-of-hooks` violations as compile-time fatal errors (overlay), so EVERY route — /login, /staff-login, every portal page — rendered the dev overlay instead of the app. Reproduction: yarn start → load any page → 'Compiled with problems / [eslint] React Hook React.useEffect is called conditionally' iframe overlay covering the whole viewport. Mitigation applied by tester: reordered SendFormDialog so the early return follows both hooks (4 lines moved). Verified post-fix by reloading every flow in this report. Sister issue to Phase 12's missing-useState fix — CI lint gating is overdue."
+}

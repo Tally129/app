@@ -602,13 +602,26 @@ function SendFormDialog({ template, onOpenChange, onSent }) {
   const [clients, setClients] = React.useState([]);
   const [clientId, setClientId] = React.useState("none");
   const [hours, setHours] = React.useState(168);
+  const [channel, setChannel] = React.useState("link");
+  const [target, setTarget] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [resultUrl, setResultUrl] = React.useState("");
+  const [resultStatus, setResultStatus] = React.useState("");
 
   React.useEffect(() => {
-    if (!template) { setResultUrl(""); setClientId("none"); return; }
+    if (!template) { setResultUrl(""); setResultStatus(""); setClientId("none"); setChannel("link"); setTarget(""); return; }
     api.get("/clients").then((r) => setClients(r.data || [])).catch(() => {});
   }, [template]);
+
+  const selectedClient = clients.find((c) => c.id === clientId);
+  React.useEffect(() => {
+    // Auto-fill target when client + channel combo selected
+    if (channel === "email") setTarget(selectedClient?.email || "");
+    else if (channel === "sms") setTarget(selectedClient?.phone || "");
+    else setTarget("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channel, clientId]);
+
   if (!template) return null;
 
   const submit = async () => {
@@ -617,13 +630,19 @@ function SendFormDialog({ template, onOpenChange, onSent }) {
       const body = {
         template_id: template.id,
         expires_in_hours: parseInt(hours) || 168,
+        channel,
       };
       if (clientId && clientId !== "none") body.client_id = clientId;
+      if (channel !== "link" && target) body.delivery_target = target;
       const r = await api.post("/forms/send", body);
-      const url = `${window.location.origin}${r.data.submit_url}`;
+      const url = r.data.submit_url || `${window.location.origin}/forms/respond/${r.data.token}`;
       setResultUrl(url);
+      setResultStatus(r.data.delivery_status || "");
       try { await navigator.clipboard.writeText(url); } catch {}
-      toast({ title: "Form link generated", description: "Copied to clipboard." });
+      const desc = channel === "link"
+        ? "Copied to clipboard."
+        : (r.data.delivery_status === "sent_stub" ? `${channel.toUpperCase()} queued (delivery stubbed in this environment).` : "Link generated — provide a recipient to send.");
+      toast({ title: "Form ready", description: desc });
     } catch (e) {
       toast({ title: "Failed", description: e?.response?.data?.detail || "" });
     } finally { setSubmitting(false); }
@@ -634,7 +653,7 @@ function SendFormDialog({ template, onOpenChange, onSent }) {
       <DialogContent className="bg-[#fbf7ee] border-[#e7dfc9]">
         <DialogHeader>
           <DialogTitle className="font-display text-2xl">Send "{template.title}"</DialogTitle>
-          <DialogDescription>Generates a tokenized soft-link the patient can open without signing in.</DialogDescription>
+          <DialogDescription>Create a tokenized soft-link the patient can open without signing in. Optionally email or SMS the link.</DialogDescription>
         </DialogHeader>
         {!resultUrl ? (
           <div className="space-y-4">
@@ -650,6 +669,44 @@ function SendFormDialog({ template, onOpenChange, onSent }) {
               <p className="text-xs text-[#6a6a6a] mt-2">Linking lets the form attach to the patient's chart on submit.</p>
             </div>
             <div>
+              <Label>Delivery</Label>
+              <div className="grid grid-cols-3 gap-2 mt-2" data-testid="forms-send-channel">
+                {[
+                  { v: "link",  label: "Copy link" },
+                  { v: "email", label: "Email" },
+                  { v: "sms",   label: "SMS" },
+                ].map((opt) => (
+                  <button
+                    key={opt.v}
+                    type="button"
+                    onClick={() => setChannel(opt.v)}
+                    className={`h-10 rounded-full border text-xs uppercase tracking-widest transition ${
+                      channel === opt.v
+                        ? "bg-[#2f4a3a] border-[#2f4a3a] text-[#f6f1e6]"
+                        : "bg-[#f6f1e6] border-[#e0d6bc] text-[#3a3a3a] hover:bg-[#f1ead8]"
+                    }`}
+                    data-testid={`forms-send-channel-${opt.v}`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {channel !== "link" && (
+              <div>
+                <Label>{channel === "email" ? "Recipient email" : "Recipient phone (E.164)"}</Label>
+                <Input
+                  className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]"
+                  type={channel === "email" ? "email" : "tel"}
+                  placeholder={channel === "email" ? "patient@example.com" : "+15551234567"}
+                  value={target}
+                  onChange={(e) => setTarget(e.target.value)}
+                  data-testid="forms-send-target"
+                />
+                {!target && selectedClient && <p className="text-xs text-[#7a2a2a] mt-1">No {channel} on file for this client — enter one above.</p>}
+              </div>
+            )}
+            <div>
               <Label>Link expires in (hours)</Label>
               <Input type="number" min={1} max={720} className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]" value={hours} onChange={(e) => setHours(e.target.value)} data-testid="forms-send-hours" />
             </div>
@@ -657,20 +714,28 @@ function SendFormDialog({ template, onOpenChange, onSent }) {
         ) : (
           <div className="space-y-3">
             <div className="rounded-2xl border border-[#a8bfa8] bg-[#dde9dd] p-4">
-              <div className="flex items-center gap-2 text-[#2f4a3a] text-sm font-medium"><CheckCircle2 size={14} /> Link ready</div>
+              <div className="flex items-center gap-2 text-[#2f4a3a] text-sm font-medium">
+                <CheckCircle2 size={14} />
+                {resultStatus === "sent_stub"
+                  ? `${channel.toUpperCase()} dispatched (stubbed in dev)`
+                  : "Link ready"}
+              </div>
               <code className="block mt-3 text-xs break-all text-[#1f2a22] bg-[#fbf7ee] rounded p-2 border border-[#e7dfc9]">{resultUrl}</code>
               <a href={resultUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-[#2f4a3a] mt-2 hover:underline">
                 <ExternalLink size={11} /> Open in new tab
               </a>
             </div>
-            <p className="text-xs text-[#6a6a6a]">SMS/email sending integration is on the roadmap. For now, copy this link and share it with the patient.</p>
+            {resultStatus !== "sent_stub" && (
+              <p className="text-xs text-[#6a6a6a]">SMS/email delivery is stubbed in this environment — production credentials wire to SendGrid + Twilio respectively.</p>
+            )}
           </div>
         )}
         <DialogFooter>
           <Button variant="outline" onClick={() => { onOpenChange(false); resultUrl && onSent && onSent(); }}>{resultUrl ? "Done" : "Cancel"}</Button>
           {!resultUrl && (
             <Button onClick={submit} disabled={submitting} className="bg-[#c19a4b] hover:bg-[#a8853f] text-[#1f2a22] rounded-full" data-testid="forms-send-submit">
-              {submitting ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Send size={14} className="mr-1" />} Generate link
+              {submitting ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Send size={14} className="mr-1" />}
+              {channel === "link" ? "Generate link" : `Send via ${channel}`}
             </Button>
           )}
         </DialogFooter>

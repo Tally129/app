@@ -672,6 +672,8 @@ class FormSendIn(BaseModel):
     appointment_id: Optional[str] = None
     expires_in_hours: int = 168  # 7 days default
     note: Optional[str] = None
+    channel: Literal["link", "email", "sms"] = "link"
+    delivery_target: Optional[str] = None  # email or phone — auto-resolved from client if blank
 
 
 class FormSubmissionAnswers(BaseModel):
@@ -697,6 +699,9 @@ class FormSubmissionOut(BaseModel):
     expires_at: Optional[datetime] = None
     submitted_at: Optional[datetime] = None
     created_at: datetime
+    channel: Optional[str] = None
+    delivery_target: Optional[str] = None
+    delivery_status: Optional[str] = None
 
 
 class FormPublicOut(BaseModel):

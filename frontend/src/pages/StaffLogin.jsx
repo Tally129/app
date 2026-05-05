@@ -17,7 +17,9 @@ export default function StaffLogin() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
-  const [email, setEmail] = React.useState("");
+  const [email, setEmail] = React.useState(() => {
+    try { return localStorage.getItem("nms_last_login_email") || ""; } catch { return ""; }
+  });
   const [password, setPassword] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const from = location.state?.from?.pathname;
@@ -31,6 +33,7 @@ export default function StaffLogin() {
     setSubmitting(true);
     try {
       const res = await loginWithPassword(email, password);
+      try { localStorage.setItem("nms_last_login_email", email); } catch {}
       if (res.user.role === "client") {
         toast({ title: "Heads up", description: "This is the staff portal — your client account opens the patient view." });
       }

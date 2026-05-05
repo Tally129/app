@@ -95,6 +95,7 @@ const NAV = {
         { to: "/portal/provider/soap", label: "SOAP Notes", icon: FileText },
         { to: "/portal/provider/protocols", label: "Protocols", icon: Activity },
         { to: "/portal/provider/forms", label: "Forms & Consents", icon: ClipboardList },
+        { to: "/portal/provider/library", label: "Document Library", icon: FolderOpen },
         { to: "/portal/provider/analytics", label: "Analytics", icon: BarChart3 },
       ],
     },
@@ -133,6 +134,7 @@ const NAV = {
         { to: "/portal/staff/soap", label: "SOAP Notes", icon: FileText },
         { to: "/portal/staff/protocols", label: "Protocols", icon: Activity },
         { to: "/portal/staff/forms", label: "Forms & Consents", icon: ClipboardList },
+        { to: "/portal/staff/library", label: "Document Library", icon: FolderOpen },
       ],
     },
     {
@@ -172,6 +174,7 @@ const NAV = {
         { to: "/portal/admin/soap", label: "SOAP Notes", icon: FileText },
         { to: "/portal/admin/protocols", label: "Protocols", icon: Activity },
         { to: "/portal/admin/forms", label: "Forms & Consents", icon: ClipboardList },
+        { to: "/portal/admin/library", label: "Document Library", icon: FolderOpen },
         { to: "/portal/admin/analytics", label: "Analytics", icon: BarChart3 },
       ],
     },

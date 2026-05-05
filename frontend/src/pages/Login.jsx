@@ -14,7 +14,12 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const { loginWithPassword } = useAuth();
-  const [form, setForm] = React.useState({ email: "", password: "", mfa: "" });
+  const [form, setForm] = React.useState(() => {
+    // Pre-fill the last successful login email saved on this device
+    let last = "";
+    try { last = localStorage.getItem("nms_last_login_email") || ""; } catch {}
+    return { email: last, password: "", mfa: "" };
+  });
   const [mfaRequired, setMfaRequired] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const set = (k, v) => setForm((p) => ({ ...p, [k]: v }));
@@ -34,6 +39,7 @@ export default function Login() {
         return;
       }
       const dest = location.state?.from || roleHome(res.user.role);
+      try { localStorage.setItem("nms_last_login_email", form.email); } catch {}
       toast({ title: "Welcome back" });
       navigate(dest, { replace: true });
     } catch (err) {
