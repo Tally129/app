@@ -98,8 +98,19 @@ JWT+RBAC+MFA+audit, intake, SOAP, GridFS files, appointments+availability, remin
   - Drafts pre-fill the Protocol Template Editor for one-click save.
 - Lessons: testing agent caught a 1-line missing-state regression (`useState(null)` for showAi was inserted slightly out of order; corrected).
 
+### Phase 13 — Document Library, Push opt-in, Recordings, Forms delivery, Last-login (May 5, 2026) ⭐ NEW
+- **Document Library** (`/portal/{role}/library`) — universal AI ingest. Drop a PDF/DOCX/TXT → Claude 4.5 classifies as form / protocol / soap / supplement / other → matching transcription path runs → operator clicks "Save to ..." which creates the real template in the right destination.
+  - Backend: `POST /api/library/classify` (multipart), `POST/GET/DELETE /api/library/supplements`.
+  - 4 LLM helpers added: `_llm_classify_document`, `_llm_form_transcribe` (existing), `_llm_protocol_transcribe` (existing), `_llm_soap_template_extract`, `_llm_supplement_extract`.
+- **Push notification opt-in banner** — `<PushOptInBanner>` mounted globally. Bottom-right card shown once when `Notification.permission==='default'` and not previously dismissed. Tied to existing `ensurePushSubscription()` helper.
+- **WebM telehealth recording → GridFS** — was already written; added `GET /api/visits/{appt_id}/recordings` + `GET /api/visits/{appt_id}/recordings/{file_id}` (streams from GridFS as `video/webm` with RBAC). Recording UI in TelehealthVisit.jsx already calls `POST /api/visits/{id}/recording` on stop.
+- **SMS/email forms delivery** — `POST /api/forms/send` now accepts `{channel: 'link'|'email'|'sms', delivery_target}`. Stub-logs to `integration_log` (`service=sendgrid|twilio`), returns `delivery_status='sent_stub'|'skipped'`. UI: SendFormDialog has a 3-button channel selector + dynamic recipient input that auto-fills from the selected client.
+- **Last-login memory** — Login + StaffLogin pre-fill email from `localStorage.nms_last_login_email`, persisted on successful sign-in.
+- **`coturn` deployment doc** — `/app/COTURN_DEPLOYMENT.md` (8-section ops guide: provisioning → TLS → conf → backend env wire-up → verification → cost guidance).
+
 ### Quality Gates
-- iter11: 13/13 backend pytest ✅ + 10/10 frontend UI ✅
+- iter12: 12/12 backend pytest ✅ + 11/11 frontend UI ✅. Tester caught a `react-hooks/rules-of-hooks` regression in SendFormDialog (4-line refactor applied).
+- iter11: Logo + Protocol AI 13+10/13+10 ✅
 - iter10: SOAP + Protocols 22/22 ✅
 - HIPAA red banner permanent
 - RBAC verified across every endpoint
@@ -144,4 +155,4 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 - Service worker registers only in production builds
 - `TEST123` is 7 chars — predates 8-char policy
 
-_Last updated: May 5, 2026 (Phase 12 — Logo refresh + Protocol AI assist)_
+_Last updated: May 5, 2026 (Phase 13 — Document Library + Forms delivery + Recordings)_
