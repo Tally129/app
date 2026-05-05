@@ -711,3 +711,114 @@ class FormPublicOut(BaseModel):
     already_submitted: bool = False
 
 
+# =========== PHASE 11: SOAP TEMPLATES ===========
+
+
+class SoapTemplateIn(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    subjective: str = ""
+    objective: str = ""
+    assessment: str = ""
+    plan: str = ""
+    visit_type: Optional[str] = None  # 'telehealth' | 'in_person' | None=any
+    active: bool = True
+
+
+class SoapTemplateOut(SoapTemplateIn):
+    id: str
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+# =========== PHASE 11: PROTOCOLS (DETOX & CUSTOM) ===========
+
+ProtocolStatus = Literal["proposed", "accepted", "active", "completed", "canceled", "declined"]
+
+
+class ProtocolSessionDef(BaseModel):
+    """One slot in the protocol grid (week N, session M)."""
+    week: int
+    session: int  # 1..N within the week
+    label: Optional[str] = None  # optional override per slot
+
+
+class ProtocolTemplateIn(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    weeks: int = Field(ge=1, le=52, default=4)
+    sessions_per_week: int = Field(ge=1, le=14, default=1)
+    daily_outline: Optional[str] = ""  # markdown / freeform
+    foods_recommended: List[str] = []
+    foods_avoid: List[str] = []
+    supplements: List[Dict[str, Any]] = []  # [{name, dose, frequency, notes}]
+    lifestyle: Optional[str] = ""
+    treatment_label: Optional[str] = "Treatment session"
+    active: bool = True
+
+
+class ProtocolTemplateOut(ProtocolTemplateIn):
+    id: str
+    builtin: bool = False
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProtocolSession(BaseModel):
+    """Realized session attached to an enrollment."""
+    week: int
+    session: int  # 1..sessions_per_week
+    label: Optional[str] = None
+    completed: bool = False
+    completed_at: Optional[datetime] = None
+    completed_by_id: Optional[str] = None
+    completed_by_name: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ProtocolEnrollmentIn(BaseModel):
+    template_id: str
+    client_id: str
+    weeks: Optional[int] = None  # override template default
+    sessions_per_week: Optional[int] = None
+    custom_note: Optional[str] = None
+
+
+class ProtocolEnrollmentOut(BaseModel):
+    id: str
+    template_id: str
+    template_title: Optional[str] = None
+    client_id: str
+    client_name: Optional[str] = None
+    practitioner_id: Optional[str] = None
+    practitioner_name: Optional[str] = None
+    weeks: int
+    sessions_per_week: int
+    status: ProtocolStatus
+    sessions: List[ProtocolSession] = []
+    snapshot: Dict[str, Any] = {}  # full template fields at enrollment time
+    custom_note: Optional[str] = None
+    proposed_at: datetime
+    accepted_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
+
+
+class ProtocolSessionUpdate(BaseModel):
+    week: int
+    session: int
+    completed: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class ProtocolDecisionIn(BaseModel):
+    decision: Literal["accept", "decline"]
+    note: Optional[str] = None
+
+
+

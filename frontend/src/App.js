@@ -30,6 +30,9 @@ import AdminNotesList from "./pages/admin/AdminNotesList";
 import AdminFilesList from "./pages/admin/AdminFilesList";
 import AdminFormsConsents from "./pages/admin/AdminFormsConsents";
 import FormResponder from "./pages/FormResponder";
+import SoapNotes from "./pages/portal/SoapNotes";
+import Protocols from "./pages/portal/Protocols";
+import PatientProtocols from "./pages/patient/PatientProtocols";
 import TelehealthVisit from "./pages/TelehealthVisit";
 import MyAccount from "./pages/portal/MyAccount";
 import FrontDesk from "./pages/portal/FrontDesk";
@@ -137,6 +140,16 @@ function App() {
             <Route path="/portal/admin/forms" element={<Protected roles={["admin", "practitioner", "staff"]}><AdminFormsConsents /></Protected>} />
             <Route path="/portal/staff/forms" element={<Protected roles={["admin", "practitioner", "staff"]}><AdminFormsConsents /></Protected>} />
             <Route path="/portal/provider/forms" element={<Protected roles={["admin", "practitioner", "staff"]}><AdminFormsConsents /></Protected>} />
+            {/* SOAP Notes hub (provider/admin/staff) */}
+            <Route path="/portal/admin/soap" element={<Protected roles={["admin", "practitioner", "staff"]}><SoapNotes /></Protected>} />
+            <Route path="/portal/staff/soap" element={<Protected roles={["admin", "practitioner", "staff"]}><SoapNotes /></Protected>} />
+            <Route path="/portal/provider/soap" element={<Protected roles={["admin", "practitioner", "staff"]}><SoapNotes /></Protected>} />
+            {/* Protocols (provider/admin only — staff read via enrollments) */}
+            <Route path="/portal/admin/protocols" element={<Protected roles={["admin", "practitioner", "staff"]}><Protocols /></Protected>} />
+            <Route path="/portal/staff/protocols" element={<Protected roles={["admin", "practitioner", "staff"]}><Protocols /></Protected>} />
+            <Route path="/portal/provider/protocols" element={<Protected roles={["admin", "practitioner", "staff"]}><Protocols /></Protected>} />
+            {/* Patient self-service */}
+            <Route path="/portal/patient/protocols" element={<Protected roles={["client"]}><PatientProtocols /></Protected>} />
             <Route path="/portal/provider/analytics" element={<Protected roles={["practitioner", "admin"]}><Analytics /></Protected>} />
 
             {/* Public form responder (token-based, no login required) */}

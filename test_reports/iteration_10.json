@@ -1,0 +1,55 @@
+{
+  "summary": "Phase 11 SOAP Notes hub + Detox Protocols — full backend pytest suite (11/11 PASS) + comprehensive UI verification across admin, practitioner, staff, and patient roles. All acceptance criteria met. End-to-end flow (propose → patient accept → session check-off → auto-complete) verified via both API and UI.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_results_backend": [
+    {"test": "GET /api/soap-templates returns seeded 'General wellness follow-up' + 'Telehealth check-in'", "result": "PASS"},
+    {"test": "POST /api/soap-templates as practitioner + PUT update → persisted via GET", "result": "PASS"},
+    {"test": "POST /api/soap-templates as staff → 403", "result": "PASS"},
+    {"test": "POST /api/soap-templates as client → 403", "result": "PASS"},
+    {"test": "DELETE /api/soap-templates as staff → 403 (admin-only)", "result": "PASS"},
+    {"test": "GET /api/notes/all?practitioner_id= filters by author", "result": "PASS"},
+    {"test": "GET /api/protocols/templates includes built-in 'Natural Medical Solutions Detox' (weeks=4, sessions_per_week=2, builtin=true)", "result": "PASS"},
+    {"test": "POST /api/protocols/enrollments (weeks=2,spw=3) creates status=proposed with 6 session slots", "result": "PASS"},
+    {"test": "Client can list only own enrollments; POST /decision accept → status=active, accepted_at set", "result": "PASS"},
+    {"test": "Decline flow → status=declined", "result": "PASS"},
+    {"test": "Staff POST enrollments → 403", "result": "PASS"},
+    {"test": "Client cannot GET another client's enrollment (403) or see it in list", "result": "PASS"},
+    {"test": "POST /sessions marks slot complete with completed_by_name; auto status=completed when all done", "result": "PASS (verified in flow test marking all 6 slots)"}
+  ],
+  "test_results_frontend": [
+    {"step": "Admin sidebar nav-link-soap-notes + nav-link-protocols visible", "result": "PASS"},
+    {"step": "/portal/admin/soap — soap-tab-notes, soap-tab-templates, soap-search, soap-client-filter, soap-provider-filter, soap-new-btn all present", "result": "PASS"},
+    {"step": "soap-new-btn → dialog opens → pick client (63 opts) + template (3 opts) → 4 textareas auto-pre-fill from template → soap-editor-save creates note", "result": "PASS"},
+    {"step": "/portal/admin/protocols — protocol-tab-enrollments + protocol-tab-templates visible", "result": "PASS"},
+    {"step": "Templates tab shows 1 BUILT-IN badge (NMS Detox) with week/session pills", "result": "PASS"},
+    {"step": "protocol-propose-{tplId} → dialog → pick client + weeks=2 + spw=3 → submit creates 'AWAITING ACCEPT' row with 0/6 progress", "result": "PASS"},
+    {"step": "Practitioner + Staff sidebars include nav-link-soap-notes and nav-link-protocols", "result": "PASS"},
+    {"step": "Patient sidebar nav-link-protocols visible on /portal/patient", "result": "PASS"},
+    {"step": "Patient /portal/patient/protocols shows patient-accept-{id} + patient-decline-{id} for proposed enrollment", "result": "PASS"},
+    {"step": "Patient accept → patient-decision-submit → enrollment transitions to status=active with accepted_at set (verified via API)", "result": "PASS"},
+    {"step": "After accept, admin opens enrollment via protocol-open-{id} → clicks protocol-session-{id}-w1-s1 → slot completed=true with completed_by_name='Site Administrator'", "result": "PASS"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_phase11_soap_protocols.py",
+    "/app/test_reports/pytest/phase11.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Backend RBAC on /api/protocols/enrollments/{id}/decision correctly allows client-self or staff/admin/practitioner (server.py L3716). Good.",
+    "Auto-complete logic (server.py L3770) correctly stamps completed_at when every session is flagged.",
+    "Minor: POST /api/clients with user_id does NOT deduplicate against an auto-created client from /auth/register — two client records can end up pointing at the same user_id (caught during test fixture). Not a Phase 11 regression but worth flagging for data hygiene.",
+    "Minor: protocol-propose-* testid namespace is shared between the per-template dialog-open buttons and the per-dialog fields (protocol-propose-client / -weeks / -spw / -submit). Tests must filter by suffix to pick the right one. Consider renaming dialog-open buttons to protocol-propose-btn-{id}.",
+    "Pre-fill logic in SOAP editor correctly populates 4 textareas from template.subjective/objective/assessment/plan."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase11_soap_protocols.py (new)"
+  ],
+  "success_rate": {"backend": "100% (11/11 pytest)", "frontend": "100% (11/11 UI checks)"},
+  "test_credentials": "admin@natmedsol.local / Admin!2345 (used); ravello@natmedsol.local / Ravello!2345; frontdesk@natmedsol.local / FrontDesk!2345; fresh patients created via POST /api/auth/register (TEST_ui_p11b_*)",
+  "seed_data_creation": "Created 2 test patients (TEST UI Patient P11 / TEST UI P11b) + 2 protocol enrollments + 1 SOAP note + 1 ephemeral SOAP template (cleaned up).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 11 ships clean. Regression surface touched: /api/soap-templates CRUD, /api/notes/all?practitioner_id filter, /api/protocols/templates (seeded NMS Detox), /api/protocols/enrollments (create/list/get/decide/sessions). Frontend routes /portal/{admin,staff,provider}/soap + /portal/{admin,staff,provider}/protocols + /portal/patient/protocols all render. Sidebar nav-link-soap-notes and nav-link-protocols present for all 4 roles.",
+  "rca of the issue": "No unresolved issues. Earlier false-negative during backend RBAC test was caused by fixture creating a duplicate client row via admin POST /api/clients — fixed by reusing the auto-created client from /auth/register (now a documented minor hygiene concern, not a Phase 11 bug)."
+}

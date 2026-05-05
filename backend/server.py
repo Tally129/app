@@ -39,6 +39,9 @@ from models import (
     ProfileUpdate, PasswordChange,
     FormTemplateIn, FormTemplateOut, FormTranscribeOut, FormGenerateIn,
     FormSendIn, FormSubmissionAnswers, FormSubmissionOut, FormPublicOut,
+    SoapTemplateIn, SoapTemplateOut,
+    ProtocolTemplateIn, ProtocolTemplateOut,
+    ProtocolEnrollmentIn, ProtocolEnrollmentOut, ProtocolSessionUpdate, ProtocolDecisionIn,
     new_id,
 )
 import httpx
@@ -3468,6 +3471,314 @@ async def get_form_submission(sub_id: str, user=Depends(require_roles("admin", "
     return out
 
 
+# =================== PHASE 11: SOAP TEMPLATES ===================
+
+
+@api.get("/soap-templates", response_model=List[SoapTemplateOut])
+async def list_soap_templates(include_inactive: bool = False,
+                              user=Depends(require_roles("admin", "practitioner", "staff"))):
+    q: Dict[str, Any] = {}
+    if not include_inactive:
+        q["active"] = True
+    rows = await db.soap_templates.find(q).sort("created_at", -1).to_list(200)
+    return [_strip_id(r) for r in rows]
+
+
+@api.post("/soap-templates", response_model=SoapTemplateOut)
+async def create_soap_template(payload: SoapTemplateIn, request: Request,
+                               user=Depends(require_roles("admin", "practitioner"))):
+    now = datetime.now(timezone.utc)
+    doc = payload.dict()
+    doc["id"] = new_id()
+    doc["created_by"] = user["id"]
+    doc["created_by_name"] = user.get("full_name")
+    doc["created_at"] = now
+    doc["updated_at"] = now
+    await db.soap_templates.insert_one(doc)
+    await log_audit(db, user["id"], user["email"], "soap_template.create",
+                    resource_type="soap_template", resource_id=doc["id"],
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return _strip_id(doc)
+
+
+@api.put("/soap-templates/{tpl_id}", response_model=SoapTemplateOut)
+async def update_soap_template(tpl_id: str, payload: SoapTemplateIn, request: Request,
+                               user=Depends(require_roles("admin", "practitioner"))):
+    existing = await db.soap_templates.find_one({"id": tpl_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Template not found")
+    updates = payload.dict()
+    updates["updated_at"] = datetime.now(timezone.utc)
+    await db.soap_templates.update_one({"id": tpl_id}, {"$set": updates})
+    doc = await db.soap_templates.find_one({"id": tpl_id})
+    await log_audit(db, user["id"], user["email"], "soap_template.update",
+                    resource_type="soap_template", resource_id=tpl_id,
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return _strip_id(doc)
+
+
+@api.delete("/soap-templates/{tpl_id}")
+async def delete_soap_template(tpl_id: str, request: Request,
+                               user=Depends(require_roles("admin"))):
+    await db.soap_templates.delete_one({"id": tpl_id})
+    await log_audit(db, user["id"], user["email"], "soap_template.delete",
+                    resource_type="soap_template", resource_id=tpl_id,
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return {"ok": True}
+
+
+# =================== PHASE 11: PROTOCOLS ===================
+
+
+def _build_sessions_grid(weeks: int, sessions_per_week: int, label: Optional[str] = None) -> List[Dict[str, Any]]:
+    out = []
+    for w in range(1, max(1, weeks) + 1):
+        for s in range(1, max(1, sessions_per_week) + 1):
+            out.append({
+                "week": w,
+                "session": s,
+                "label": (label or "Session"),
+                "completed": False,
+                "completed_at": None,
+                "completed_by_id": None,
+                "completed_by_name": None,
+                "notes": None,
+            })
+    return out
+
+
+@api.get("/protocols/templates", response_model=List[ProtocolTemplateOut])
+async def list_protocol_templates(include_inactive: bool = False,
+                                  user=Depends(get_current_user)):
+    if user["role"] == "client":
+        # Clients only need to know names if proposed to them; they don't browse templates
+        return []
+    q: Dict[str, Any] = {}
+    if not include_inactive:
+        q["active"] = True
+    rows = await db.protocol_templates.find(q).sort("created_at", -1).to_list(200)
+    return [_strip_id(r) for r in rows]
+
+
+@api.post("/protocols/templates", response_model=ProtocolTemplateOut)
+async def create_protocol_template(payload: ProtocolTemplateIn, request: Request,
+                                   user=Depends(require_roles("admin", "practitioner"))):
+    now = datetime.now(timezone.utc)
+    doc = payload.dict()
+    doc["id"] = new_id()
+    doc["builtin"] = False
+    doc["created_by"] = user["id"]
+    doc["created_by_name"] = user.get("full_name")
+    doc["created_at"] = now
+    doc["updated_at"] = now
+    await db.protocol_templates.insert_one(doc)
+    await log_audit(db, user["id"], user["email"], "protocol_template.create",
+                    resource_type="protocol_template", resource_id=doc["id"],
+                    metadata={"title": doc.get("title")},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return _strip_id(doc)
+
+
+@api.put("/protocols/templates/{tpl_id}", response_model=ProtocolTemplateOut)
+async def update_protocol_template(tpl_id: str, payload: ProtocolTemplateIn, request: Request,
+                                   user=Depends(require_roles("admin", "practitioner"))):
+    existing = await db.protocol_templates.find_one({"id": tpl_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if existing.get("builtin") and user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Built-in templates can only be edited by admins")
+    updates = payload.dict()
+    updates["updated_at"] = datetime.now(timezone.utc)
+    await db.protocol_templates.update_one({"id": tpl_id}, {"$set": updates})
+    doc = await db.protocol_templates.find_one({"id": tpl_id})
+    await log_audit(db, user["id"], user["email"], "protocol_template.update",
+                    resource_type="protocol_template", resource_id=tpl_id,
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return _strip_id(doc)
+
+
+@api.delete("/protocols/templates/{tpl_id}")
+async def delete_protocol_template(tpl_id: str, request: Request,
+                                   user=Depends(require_roles("admin"))):
+    existing = await db.protocol_templates.find_one({"id": tpl_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if existing.get("builtin"):
+        await db.protocol_templates.update_one({"id": tpl_id}, {"$set": {"active": False, "updated_at": datetime.now(timezone.utc)}})
+    else:
+        await db.protocol_templates.delete_one({"id": tpl_id})
+    await log_audit(db, user["id"], user["email"], "protocol_template.delete",
+                    resource_type="protocol_template", resource_id=tpl_id,
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return {"ok": True}
+
+
+@api.post("/protocols/enrollments", response_model=ProtocolEnrollmentOut)
+async def create_protocol_enrollment(payload: ProtocolEnrollmentIn, request: Request,
+                                     user=Depends(require_roles("admin", "practitioner"))):
+    tpl = await db.protocol_templates.find_one({"id": payload.template_id})
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    client = await db.clients.find_one({"id": payload.client_id})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    weeks = payload.weeks or tpl.get("weeks") or 4
+    spw = payload.sessions_per_week or tpl.get("sessions_per_week") or 1
+    sessions = _build_sessions_grid(weeks, spw, tpl.get("treatment_label") or "Session")
+    now = datetime.now(timezone.utc)
+    snapshot = {k: tpl.get(k) for k in (
+        "title", "description", "daily_outline", "foods_recommended", "foods_avoid",
+        "supplements", "lifestyle", "treatment_label",
+    )}
+    doc = {
+        "id": new_id(),
+        "template_id": tpl["id"],
+        "template_title": tpl.get("title"),
+        "client_id": client["id"],
+        "client_name": client.get("full_name") or client.get("email"),
+        "practitioner_id": user["id"] if user["role"] == "practitioner" else None,
+        "practitioner_name": user.get("full_name") if user["role"] == "practitioner" else None,
+        "weeks": weeks,
+        "sessions_per_week": spw,
+        "status": "proposed",
+        "sessions": sessions,
+        "snapshot": snapshot,
+        "custom_note": payload.custom_note,
+        "proposed_at": now,
+        "accepted_at": None,
+        "completed_at": None,
+        "created_by": user["id"],
+        "created_by_name": user.get("full_name"),
+    }
+    await db.protocol_enrollments.insert_one(doc)
+    await log_audit(db, user["id"], user["email"], "protocol_enrollment.create",
+                    resource_type="protocol_enrollment", resource_id=doc["id"],
+                    metadata={"client_id": client["id"], "template_id": tpl["id"]},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    # Push to client portal user
+    if client.get("user_id"):
+        try:
+            await push_to_user(
+                client["user_id"],
+                f"New protocol proposed: {tpl.get('title','')}",
+                "Tap to review and accept your wellness protocol.",
+                url="/portal/patient/protocols",
+                tag=f"protocol-{doc['id']}",
+            )
+        except Exception:
+            pass
+    return _strip_id(doc)
+
+
+@api.get("/protocols/enrollments", response_model=List[ProtocolEnrollmentOut])
+async def list_protocol_enrollments(
+    client_id: Optional[str] = None,
+    practitioner_id: Optional[str] = None,
+    status: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    if user["role"] == "client":
+        self_client = await _resolve_self_client(user)
+        if not self_client:
+            return []
+        q: Dict[str, Any] = {"client_id": self_client["id"]}
+    else:
+        q = {}
+        if client_id:
+            q["client_id"] = client_id
+        if practitioner_id:
+            q["practitioner_id"] = practitioner_id
+    if status:
+        q["status"] = status
+    rows = await db.protocol_enrollments.find(q).sort("proposed_at", -1).to_list(500)
+    return [_strip_id(r) for r in rows]
+
+
+@api.get("/protocols/enrollments/{enr_id}", response_model=ProtocolEnrollmentOut)
+async def get_protocol_enrollment(enr_id: str, user=Depends(get_current_user)):
+    enr = await db.protocol_enrollments.find_one({"id": enr_id})
+    if not enr:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    if user["role"] == "client":
+        self_client = await _resolve_self_client(user)
+        if not self_client or enr.get("client_id") != self_client["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    return _strip_id(enr)
+
+
+@api.post("/protocols/enrollments/{enr_id}/decision", response_model=ProtocolEnrollmentOut)
+async def decide_protocol(enr_id: str, payload: ProtocolDecisionIn, request: Request,
+                          user=Depends(get_current_user)):
+    enr = await db.protocol_enrollments.find_one({"id": enr_id})
+    if not enr:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    # Either the client themselves, or staff/admin/practitioner can record decision
+    if user["role"] == "client":
+        self_client = await _resolve_self_client(user)
+        if not self_client or enr.get("client_id") != self_client["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    if enr["status"] != "proposed":
+        raise HTTPException(status_code=409, detail=f"Cannot decide: current status is {enr['status']}")
+    now = datetime.now(timezone.utc)
+    if payload.decision == "accept":
+        await db.protocol_enrollments.update_one(
+            {"id": enr_id},
+            {"$set": {"status": "active", "accepted_at": now}},
+        )
+    else:
+        await db.protocol_enrollments.update_one(
+            {"id": enr_id},
+            {"$set": {"status": "declined", "completed_at": now, "custom_note": payload.note or enr.get("custom_note")}},
+        )
+    await log_audit(db, user["id"], user["email"], f"protocol.{payload.decision}",
+                    resource_type="protocol_enrollment", resource_id=enr_id,
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    enr = await db.protocol_enrollments.find_one({"id": enr_id})
+    return _strip_id(enr)
+
+
+@api.post("/protocols/enrollments/{enr_id}/sessions", response_model=ProtocolEnrollmentOut)
+async def update_protocol_session(enr_id: str, payload: ProtocolSessionUpdate, request: Request,
+                                  user=Depends(require_roles("admin", "practitioner", "staff"))):
+    enr = await db.protocol_enrollments.find_one({"id": enr_id})
+    if not enr:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    if enr["status"] not in {"active", "accepted"}:
+        raise HTTPException(status_code=409, detail=f"Protocol is {enr['status']}; cannot mark sessions")
+    sessions = enr.get("sessions") or []
+    matched = False
+    for s in sessions:
+        if s["week"] == payload.week and s["session"] == payload.session:
+            matched = True
+            if payload.completed is not None:
+                s["completed"] = payload.completed
+                if payload.completed:
+                    s["completed_at"] = datetime.now(timezone.utc)
+                    s["completed_by_id"] = user["id"]
+                    s["completed_by_name"] = user.get("full_name")
+                else:
+                    s["completed_at"] = None
+                    s["completed_by_id"] = None
+                    s["completed_by_name"] = None
+            if payload.notes is not None:
+                s["notes"] = payload.notes
+            break
+    if not matched:
+        raise HTTPException(status_code=404, detail="Session slot not found")
+    update = {"sessions": sessions}
+    # Auto-complete protocol when all sessions are done
+    if all(s.get("completed") for s in sessions):
+        update["status"] = "completed"
+        update["completed_at"] = datetime.now(timezone.utc)
+    await db.protocol_enrollments.update_one({"id": enr_id}, {"$set": update})
+    await log_audit(db, user["id"], user["email"], "protocol.session_update",
+                    resource_type="protocol_enrollment", resource_id=enr_id,
+                    metadata={"week": payload.week, "session": payload.session, "completed": payload.completed},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    enr = await db.protocol_enrollments.find_one({"id": enr_id})
+    return _strip_id(enr)
+
+
 # =================== STARTUP ===================
 @app.on_event("startup")
 async def seed_demo():
@@ -3483,6 +3794,11 @@ async def seed_demo():
         await db.form_templates.create_index([("builtin", 1), ("title", 1)])
         await db.form_submissions.create_index("token", unique=True)
         await db.form_submissions.create_index("client_id")
+        await db.soap_templates.create_index("title")
+        await db.protocol_templates.create_index([("builtin", 1), ("title", 1)])
+        await db.protocol_enrollments.create_index("client_id")
+        await db.protocol_enrollments.create_index("practitioner_id")
+        await db.protocol_enrollments.create_index("status")
     except Exception as e:
         logger.warning("Index creation warning: %s", e)
 
@@ -3573,6 +3889,96 @@ async def seed_demo():
                 **b,
             })
             logger.info("Seeded built-in form template: %s", b["title"])
+
+    # Idempotent SOAP starter templates
+    soap_seeds = [
+        {
+            "title": "General wellness follow-up",
+            "description": "Standard follow-up visit template covering progress, vitals, plan refresh.",
+            "subjective": "Client reports … Sleep: …  Energy: …  Mood: …  Appetite: …  Bowel/digestion: …",
+            "objective": "Vitals (if taken): BP …, HR …, Wt …  Observed: …",
+            "assessment": "Progress on previously identified concerns. Trending: …",
+            "plan": "1. Continue current supplements\n2. Lifestyle: …\n3. Labs to repeat: …\n4. Follow-up in __ weeks.",
+            "visit_type": None,
+            "active": True,
+        },
+        {
+            "title": "Telehealth check-in",
+            "description": "Brief telehealth visit template — focuses on reported symptoms, no in-person vitals.",
+            "subjective": "Reason for today's call: …  Since last visit: …  Concerns: …",
+            "objective": "Visual exam (telehealth): general appearance, skin tone, affect.",
+            "assessment": "Updated impression based on subjective report.",
+            "plan": "Updates to protocol: …  Items shipped/picked up: …  Follow-up: …",
+            "visit_type": "telehealth",
+            "active": True,
+        },
+    ]
+    for s in soap_seeds:
+        if not await db.soap_templates.find_one({"title": s["title"]}):
+            await db.soap_templates.insert_one({
+                "id": new_id(),
+                "created_by": None,
+                "created_by_name": "Built-in",
+                "created_at": now,
+                "updated_at": now,
+                **s,
+            })
+            logger.info("Seeded SOAP template: %s", s["title"])
+
+    # Idempotent built-in detox protocol template
+    if not await db.protocol_templates.find_one({"title": "Natural Medical Solutions Detox", "builtin": True}):
+        await db.protocol_templates.insert_one({
+            "id": new_id(),
+            "builtin": True,
+            "active": True,
+            "title": "Natural Medical Solutions Detox",
+            "description": "Configurable multi-week detoxification protocol with daily nutrition, recommended foods, and check-off treatment sessions.",
+            "weeks": 4,
+            "sessions_per_week": 2,
+            "treatment_label": "Detox treatment",
+            "daily_outline": (
+                "**Breakfast** — 2 scoops Protein Plus Superfood Detox in 8 oz water/coconut water, "
+                "blend with blueberries, strawberries, or raspberries, plus juice of half a lemon.\n\n"
+                "**Lunch** — Same shake (with green apple or celery) plus a salad with chicken or wild-caught fish.\n\n"
+                "**Dinner** — Salmon or bass with vegetables: asparagus, spinach, cauliflower, kale, bok choy, okra, zucchini.\n\n"
+                "**Snacks** — Organic vegan protein bars, cucumber, celery, raspberries/strawberries, green apples. All ingredients organic."
+            ),
+            "foods_recommended": [
+                "100% Berry Juices", "Apples", "Blueberries", "Raspberries", "Strawberries",
+                "Arugula", "Bok Choy", "Cabbage", "Kale", "Onion", "Garlic", "Watercress",
+                "Quinoa", "Buckwheat", "Millet", "Spelt", "Whole-grain rice",
+                "Brazil nuts", "Pecans", "Walnuts", "Macadamia nuts",
+                "Coconut milk", "Cashew milk", "Rice milk",
+                "Extra virgin olive oil", "Coconut oil", "Flaxseed oil",
+                "Organic green tea", "Organic herbal tea", "Purified water",
+                "Chicken", "Cod", "Halibut", "Salmon", "Trout", "Tuna",
+            ],
+            "foods_avoid": [
+                "Canned fruit packed in syrup", "High-sugar berry juices",
+                "Soybean / soy-based foods", "Canned vegetables in sauces",
+                "Gluten grains", "Refined flours", "Kamut",
+                "Peanuts", "Chestnuts",
+                "All dairy (milk, cheese, yogurt, ice-cream, whey)",
+                "Butter", "Margarine", "Mayonnaise", "Hydrogenated oils",
+                "Alcohol", "Coffee", "Black tea", "Sweetened beverages",
+                "BBQ sauce", "Soy sauce", "Ketchup", "Cane sugar",
+                "Processed meats", "Shellfish", "Fried foods", "Non-organic meats",
+                "Artificial flavors / colors / preservatives (MSG)",
+            ],
+            "supplements": [],
+            "lifestyle": (
+                "• Use fresh herbs and spices for seasoning.\n"
+                "• Avoid packaged and processed foods — organic only.\n"
+                "• Drink at least 8 cups of water per day.\n"
+                "• No dairy.\n"
+                "• Eight hours of sleep nightly; gentle movement (walking, yoga) daily."
+            ),
+            "created_by": None,
+            "created_by_name": "Built-in",
+            "created_at": now,
+            "updated_at": now,
+        })
+        logger.info("Seeded built-in detox protocol template.")
 
 
 @app.on_event("shutdown")
