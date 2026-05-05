@@ -71,10 +71,27 @@ JWT+RBAC+MFA+audit, intake, SOAP, GridFS files, appointments+availability, remin
 - **Backend endpoints (Phase 10)**: `GET/POST/PUT/DELETE /api/forms/templates`, `POST /api/forms/transcribe`, `POST /api/forms/generate`, `POST /api/forms/send`, `GET /api/forms/submissions`, `GET /api/forms/submissions/{id}`, `GET /api/public/forms/{token}`, `POST /api/public/forms/{token}/submit`, `GET /api/notes/all`.
 - **New deps**: `pypdf`, `python-docx`, `lxml` (added to requirements.txt).
 
+### Phase 11 — SOAP Notes hub + Detox Protocols (May 5, 2026) ⭐ NEW
+- **SOAP Notes hub** at `/portal/{admin,staff,provider}/soap`:
+  - Notes tab: clinic-wide list with **filter by client + by author/provider** + free-text search.
+  - Templates tab: provider/admin can create, edit, delete starter SOAP templates (subjective / objective / assessment / plan with optional visit_type 'telehealth' or 'in_person').
+  - "New SOAP" dialog → pick a client + a template → S/O/A/P sections pre-fill → save attaches to that client's chart (history retained on patient profile via existing `/notes` per-client endpoint).
+  - Seeded templates: 'General wellness follow-up' + 'Telehealth check-in'.
+- **Protocols** at `/portal/{admin,staff,provider}/protocols`:
+  - Templates tab: configurable X-week × N-treatments-per-week protocols. Built-in 'Natural Medical Solutions Detox' (4 wk × 2/wk) auto-seeded with the daily outline, recommended foods, foods-to-avoid, and lifestyle guidance from the supplied DOCX template.
+  - Propose flow: provider/admin selects a client and customizes weeks/sessions → an enrollment is created with status `proposed` and a sessions grid (week × session) → web-push notification sent to the client.
+  - Patient view at `/portal/patient/protocols`:
+    - Awaiting acceptance section with **Accept / Decline** buttons + optional note.
+    - Active section with progress bar; History section for past protocols.
+    - Read-only sessions grid (provider-only check-off).
+  - Per-session check-offs (provider/admin/staff): clicking a session toggles complete, stamps `completed_by_name` + timestamp; when all sessions complete, status auto-advances to `completed`.
+  - Clinic-wide enrollments index with filter by **client / provider / status** + search.
+- **Backend endpoints (Phase 11)**: `GET/POST/PUT/DELETE /api/soap-templates`, `GET/POST/PUT/DELETE /api/protocols/templates`, `POST /api/protocols/enrollments`, `GET /api/protocols/enrollments(?client_id|practitioner_id|status)`, `GET /api/protocols/enrollments/{id}`, `POST /api/protocols/enrollments/{id}/decision`, `POST /api/protocols/enrollments/{id}/sessions`.
+
 ### Quality Gates
-- iter8: backend 13/13 pytest pass · frontend ~92% (1 bug found in FrontDesk filter — fixed in iter9)
-- iter9: 6/6 frontend regression PASS
-- 109/110 backend pytest pass (1 environmental skip) + 13/13 Phase 9 + 13/13 Phase 10 (`test_phase10_forms.py`)
+- iter10: 11/11 backend pytest ✅ + 11/11 frontend UI ✅ (Phase 11 zero issues)
+- iter9: FrontDesk regression 6/6 ✅
+- iter8: Phase 10 forms 13/13 ✅
 - HIPAA red banner permanent
 - RBAC verified across every endpoint
 - Audit logging on all mutations
@@ -118,4 +135,4 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 - Service worker registers only in production builds
 - `TEST123` is 7 chars — predates 8-char policy
 
-_Last updated: May 5, 2026 (Phase 10 — Forms & Consents + UX cleanup)_
+_Last updated: May 5, 2026 (Phase 11 — SOAP Notes hub + Detox Protocols)_
