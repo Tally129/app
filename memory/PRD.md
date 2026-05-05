@@ -88,10 +88,19 @@ JWT+RBAC+MFA+audit, intake, SOAP, GridFS files, appointments+availability, remin
   - Clinic-wide enrollments index with filter by **client / provider / status** + search.
 - **Backend endpoints (Phase 11)**: `GET/POST/PUT/DELETE /api/soap-templates`, `GET/POST/PUT/DELETE /api/protocols/templates`, `POST /api/protocols/enrollments`, `GET /api/protocols/enrollments(?client_id|practitioner_id|status)`, `GET /api/protocols/enrollments/{id}`, `POST /api/protocols/enrollments/{id}/decision`, `POST /api/protocols/enrollments/{id}/sessions`.
 
+### Phase 12 — Logo refresh + Protocol AI assist (May 5, 2026) ⭐ NEW
+- **New brand logo** (Natural Medical Solutions emblem with leaf+banner) replaces the old SVG monogram across the entire app — Home, Login, StaffLogin, FormResponder, sidebar, favicon. White background was punched to alpha=0 so it sits cleanly on the parchment palette.
+- **"36 years in practice"** copy now applied everywhere (the bio paragraph on Home was missed in Phase 10 — fixed).
+- **Protocols → AI Transcribe + AI Generate** mirrors the Forms & Consents flow:
+  - `POST /api/protocols/transcribe` (multipart PDF/DOCX/TXT) → Claude 4.5 → structured protocol draft (weeks, sessions/week, foods, lifestyle, supplements, daily outline).
+  - `POST /api/protocols/generate` (`{prompt}`) → Claude 4.5 → drafted protocol from a free-text description.
+  - Both restricted to admin+practitioner (staff/client → 403).
+  - Drafts pre-fill the Protocol Template Editor for one-click save.
+- Lessons: testing agent caught a 1-line missing-state regression (`useState(null)` for showAi was inserted slightly out of order; corrected).
+
 ### Quality Gates
-- iter10: 11/11 backend pytest ✅ + 11/11 frontend UI ✅ (Phase 11 zero issues)
-- iter9: FrontDesk regression 6/6 ✅
-- iter8: Phase 10 forms 13/13 ✅
+- iter11: 13/13 backend pytest ✅ + 10/10 frontend UI ✅
+- iter10: SOAP + Protocols 22/22 ✅
 - HIPAA red banner permanent
 - RBAC verified across every endpoint
 - Audit logging on all mutations
@@ -135,4 +144,4 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 - Service worker registers only in production builds
 - `TEST123` is 7 chars — predates 8-char policy
 
-_Last updated: May 5, 2026 (Phase 11 — SOAP Notes hub + Detox Protocols)_
+_Last updated: May 5, 2026 (Phase 12 — Logo refresh + Protocol AI assist)_
