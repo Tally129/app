@@ -1,0 +1,51 @@
+{
+  "summary": "Phase 14 — Auto-attach supplement directions on SOAP note save. Backend (11/11 pytest GREEN): supplement-sheet creation, auto-fan-out from POST /api/notes (case-insensitive substring on title across S/O/A/P), idempotency on second matching note (single active row, both note IDs in note_ids[], last_referenced_at bumped), no-op when not referenced, second sheet referenced in `assessment` produces second row, RBAC (client GET own=200, GET other=403, staff manual POST=403), practitioner manual POST sets source='manual', DELETE soft-deletes (active=false, no longer in list), audit_logs contain `supplement_assignment.create` and `.remove`. Frontend (3/3 GREEN): /portal/patient/plan renders [data-testid='patient-supplement-assignments'] with 2 [data-testid^='patient-supp-'] cards (sheet_title, summary, items list, assigned_by_name + date, 'auto-attached' chip on source='auto_soap'); empty patient (no assignments, no plans) shows the existing 'No active treatment plan yet' empty-state and the supplement section is NOT rendered; regression smoke /portal/admin/library still loads with library-drop-zone / library-file-input / library-analyze-btn and Forms link still navigates — zero console errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_results_backend": [
+    {"test": "POST /api/library/supplements (admin) — sheet created with 3 items, active=true", "result": "PASS"},
+    {"test": "POST /api/notes plan='Start <Liver Detox Support …>' → 200; GET /clients/{cid}/supplement-assignments → 1 row source='auto_soap', items_snapshot length matches sheet, note_ids contains note1 id", "result": "PASS"},
+    {"test": "Second POST /api/notes referencing same sheet → idempotent, still 1 active row, note_ids contains both note ids, last_referenced_at >= assigned_at", "result": "PASS"},
+    {"test": "Third POST /api/notes WITHOUT reference → assignment count unchanged", "result": "PASS"},
+    {"test": "POST /api/notes with assessment mentioning a DIFFERENT sheet ('Adrenal Renew …') → second assignment row created (source='auto_soap')", "result": "PASS"},
+    {"test": "Client GET /clients/{OWN_id}/supplement-assignments → 200", "result": "PASS"},
+    {"test": "Client GET /clients/{OTHER_id}/supplement-assignments → 403", "result": "PASS"},
+    {"test": "Staff POST /clients/{cid}/supplement-assignments → 403", "result": "PASS"},
+    {"test": "Practitioner POST /clients/{cid}/supplement-assignments → 200, source='manual'", "result": "PASS"},
+    {"test": "Practitioner DELETE /clients/{cid}/supplement-assignments/{id} → 200 ok=true; subsequent GET no longer lists it", "result": "PASS"},
+    {"test": "GET /api/admin/audit?action=supplement_assignment.create AND ?action=supplement_assignment.remove → both return ≥1 row", "result": "PASS"}
+  ],
+  "test_results_frontend": [
+    {"step": "Login as freshly-registered patient with 2 auto_soap assignments → /portal/patient/plan shows [data-testid='patient-supplement-assignments'] section", "result": "PASS"},
+    {"step": "2 [data-testid^='patient-supp-'] cards rendered with sheet_title, assigned-by name + date, summary, item list (Milk Thistle/NAC etc.), and 'auto-attached' chip on each (source='auto_soap')", "result": "PASS"},
+    {"step": "Login as fresh patient with 0 assignments + 0 plans → supplement section NOT rendered; 'No active treatment plan yet' empty-state visible", "result": "PASS"},
+    {"step": "Regression /portal/admin/library — drop-zone + file-input + analyze-btn all present; sidebar Forms link still navigates to /portal/admin/forms; 0 console errors", "result": "PASS"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_phase14_supplements.py",
+    "/app/test_reports/pytest/phase14.xml"
+  ],
+  "action_items": [
+    "(Optional) NoteOut Pydantic model intentionally omits the `auto_attached_supplements` field per the agent-to-agent note — fine for now, but consider adding it to NoteOut later so the practitioner UI can display 'auto-attached X sheets' inline after saving a note instead of round-tripping through a separate GET.",
+    "(Minor) _fan_out_supplements_for_note currently does title.lower() in haystack — substring matching means a sheet titled 'Iron' would also match 'irony' or 'environment'. Already partly mitigated by the `len(title) < 4` guard but still fragile; consider word-boundary regex (\\biron\\b) for production. Document this limitation when adding short-title sheets.",
+    "(Minor) The push notification on auto-attach is best-effort (try/except pass) — if VAPID is misconfigured the patient will get the assignment row but no push. Worth surfacing this as an integration_log row for observability instead of silently swallowing.",
+    "(Minor) The auto-attach route does NOT write a `supplement_assignment.create` audit row (only the manual POST does). Consider mirroring it for the auto path so admins have a single audit trail for assignment provenance."
+  ],
+  "critical_code_review_comments": [
+    "_fan_out_supplements_for_note loops sheets sequentially with N+1 awaits (find_one + insert/update per match). Fine at N<200 sheets, but moves to O(N) per note save. Consider batching or pre-filtering with a $regex query on title per note to skip the in-Python substring loop once the sheet count grows.",
+    "Substring match is done on .lower() of joined fields — punctuation and word boundaries are ignored. Will produce false positives for short, common titles (e.g., 'Iron'). The existing `< 4 chars` filter is necessary but not sufficient.",
+    "DELETE /clients/{cid}/supplement-assignments/{id} sets active=false but does NOT remove the assignment_id from any push tag tracking — if the client re-receives the same sheet via auto_soap later, a NEW row is created (since the existing row is active=false, the `find_one({active:true})` misses it). Confirm intentional vs. resurrecting the soft-deleted row.",
+    "Manual POST /clients/{cid}/supplement-assignments returns the existing row when one is already active — but uses 200 status (not 409), and the response body is a stripped existing row, not a 'created' marker. Caller can't distinguish 'created' from 'already existed'. Consider returning 200 with a `was_existing` flag or 409.",
+    "RBAC dependency for create/delete uses require_roles('admin','practitioner'). Staff POST returns 403 ✅. But the `client_id` path param is not validated against the practitioner's actual patient relationship (any practitioner can attach a sheet to any client). If multi-practice isolation matters later, add an ownership check."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase14_supplements.py (new — 11 pytest cases)"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (4/4 UI checks)"},
+  "test_credentials": "admin@natmedsol.local / Admin!2345; ravello@natmedsol.local / Ravello!2345; frontdesk@natmedsol.local / FrontDesk!2345; patients via /auth/register (TEST_p14_*, TEST_p14b_*, TEST_p14fe_*, TEST_p14empty_*)",
+  "seed_data_creation": "Created several supplement_sheets via /api/library/supplements (titles 'Liver Detox Support …', 'Adrenal Renew …', 'Manual Sheet …', 'Liver Detox Support FE …'), 4 ephemeral patients via /auth/register, ~5 SOAP visit_notes referencing the sheets, and the resulting client_supplement_assignments rows. All test data prefixed TEST_ where applicable. Existing 'Liver Detox Support' sheet from a prior agent run was matched alongside the nonce'd one because substring 'liver detox support' appears in both — confirmed expected behavior, not a defect.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 14 GREEN. The /api/admin/audit endpoint is the correct path (not /api/audit-logs). When seeding for FE tests, remember _fan_out matches ANY active sheet whose title is a case-insensitive substring of the joined S/O/A/P text — so a generic 'Liver Detox Support' sheet from a prior iteration will also auto-attach when you reference 'Liver Detox Support FE <nonce>'. Use unique enough titles or clean db.supplement_sheets first if you want exact-1 assertions. The patient must register via /api/auth/register (which auto-creates a clients row with user_id linkage) so /portal/patient/plan can resolve /clients/me. Frontend UI testids: 'patient-supplement-assignments' (section), 'patient-supp-{assignmentId}' (card). 'auto-attached' chip text is present in card innerText.",
+  "rca of the issue": "No bugs found in Phase 14. The flow works end-to-end: POST /api/notes → _fan_out_supplements_for_note scans S/O/A/P → creates client_supplement_assignments rows (or bumps existing) → push_to_user fires (best-effort) → audit log written for manual paths → client GET on /portal/patient/plan resolves /clients/me then /clients/{id}/supplement-assignments → PatientPlan.jsx renders the new section above existing treatment-plans, with proper empty-state fallback when both lists are empty."
+}

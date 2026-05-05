@@ -439,11 +439,144 @@ async def create_note(payload: NoteIn, request: Request,
     doc["amendments"] = []
     doc["created_at"] = datetime.now(timezone.utc)
     await db.visit_notes.insert_one(doc)
+
+    # ---- Phase 14: auto-attach referenced supplement directions to the patient chart ----
+    matched = await _fan_out_supplements_for_note(doc, user)
+    if matched:
+        doc["auto_attached_supplements"] = matched
     await log_audit(db, user["id"], user["email"], "note.create",
                     resource_type="note", resource_id=doc["id"],
-                    metadata={"client_id": payload.client_id},
+                    metadata={"client_id": payload.client_id, "auto_attached": [m["sheet_id"] for m in matched]},
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
     return _strip_id(doc)
+
+
+async def _fan_out_supplements_for_note(note: dict, user: dict) -> list:
+    """Scan a SOAP note's free-text fields for references to active supplement
+    sheets (case-insensitive substring on title) and create assignment rows so
+    the patient's portal "My Plan" page surfaces those PDFs automatically."""
+    haystack = " ".join([
+        note.get("subjective") or "",
+        note.get("objective") or "",
+        note.get("assessment") or "",
+        note.get("plan") or "",
+    ]).lower()
+    if not haystack.strip():
+        return []
+    sheets = await db.supplement_sheets.find({"active": True}).to_list(200)
+    matched = []
+    now = datetime.now(timezone.utc)
+    for s in sheets:
+        title = (s.get("title") or "").strip()
+        if len(title) < 4:
+            continue  # avoid spurious matches on tiny titles
+        if title.lower() in haystack:
+            # idempotent — only create when not already linked
+            existing = await db.client_supplement_assignments.find_one({
+                "client_id": note["client_id"], "sheet_id": s["id"], "active": True,
+            })
+            if existing:
+                # bump last_referenced + add note ref
+                await db.client_supplement_assignments.update_one(
+                    {"id": existing["id"]},
+                    {"$set": {"last_referenced_at": now}, "$addToSet": {"note_ids": note["id"]}},
+                )
+                matched.append({"sheet_id": s["id"], "sheet_title": title, "assignment_id": existing["id"], "newly_assigned": False})
+            else:
+                a = {
+                    "id": new_id(),
+                    "client_id": note["client_id"],
+                    "sheet_id": s["id"],
+                    "sheet_title": title,
+                    "sheet_summary": s.get("summary") or "",
+                    "items_snapshot": s.get("items") or [],
+                    "active": True,
+                    "assigned_by_id": user["id"],
+                    "assigned_by_name": user.get("full_name") or "",
+                    "assigned_at": now,
+                    "last_referenced_at": now,
+                    "note_ids": [note["id"]],
+                    "source": "auto_soap",
+                }
+                await db.client_supplement_assignments.insert_one(a)
+                matched.append({"sheet_id": s["id"], "sheet_title": title, "assignment_id": a["id"], "newly_assigned": True})
+                # Push notification to the client portal user
+                try:
+                    if c_user_id := (await db.clients.find_one({"id": note["client_id"]})).get("user_id"):
+                        await push_to_user(
+                            c_user_id,
+                            "New supplement directions",
+                            f"Dr. {user.get('full_name') or ''} attached \"{title}\" to your plan.",
+                            url="/portal/patient/plan",
+                            tag=f"supp-{a['id']}",
+                        )
+                except Exception:
+                    pass
+    return matched
+
+
+# ---- Client supplement assignments CRUD ----
+@api.get("/clients/{client_id}/supplement-assignments")
+async def list_client_supplement_assignments(client_id: str, user=Depends(get_current_user)):
+    if user["role"] == "client":
+        sc = await _resolve_self_client(user)
+        if not sc or sc["id"] != client_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    rows = await db.client_supplement_assignments.find({"client_id": client_id, "active": True}).sort("assigned_at", -1).to_list(200)
+    return [_strip_id(r) for r in rows]
+
+
+@api.post("/clients/{client_id}/supplement-assignments")
+async def create_client_supplement_assignment(client_id: str, payload: dict, request: Request,
+                                              user=Depends(require_roles("admin", "practitioner"))):
+    sheet_id = payload.get("sheet_id")
+    if not sheet_id:
+        raise HTTPException(status_code=400, detail="sheet_id required")
+    sheet = await db.supplement_sheets.find_one({"id": sheet_id})
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    client = await db.clients.find_one({"id": client_id})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    existing = await db.client_supplement_assignments.find_one({"client_id": client_id, "sheet_id": sheet_id, "active": True})
+    if existing:
+        return _strip_id(existing)
+    now = datetime.now(timezone.utc)
+    a = {
+        "id": new_id(),
+        "client_id": client_id,
+        "sheet_id": sheet_id,
+        "sheet_title": sheet.get("title"),
+        "sheet_summary": sheet.get("summary") or "",
+        "items_snapshot": sheet.get("items") or [],
+        "active": True,
+        "assigned_by_id": user["id"],
+        "assigned_by_name": user.get("full_name"),
+        "assigned_at": now,
+        "last_referenced_at": now,
+        "note_ids": [],
+        "source": "manual",
+    }
+    await db.client_supplement_assignments.insert_one(a)
+    await log_audit(db, user["id"], user["email"], "supplement_assignment.create",
+                    resource_type="client", resource_id=client_id,
+                    metadata={"sheet_id": sheet_id},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return _strip_id(a)
+
+
+@api.delete("/clients/{client_id}/supplement-assignments/{assignment_id}")
+async def remove_client_supplement_assignment(client_id: str, assignment_id: str, request: Request,
+                                              user=Depends(require_roles("admin", "practitioner"))):
+    a = await db.client_supplement_assignments.find_one({"id": assignment_id})
+    if not a or a.get("client_id") != client_id:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    await db.client_supplement_assignments.update_one({"id": assignment_id}, {"$set": {"active": False, "removed_at": datetime.now(timezone.utc), "removed_by_id": user["id"]}})
+    await log_audit(db, user["id"], user["email"], "supplement_assignment.remove",
+                    resource_type="client", resource_id=client_id,
+                    metadata={"assignment_id": assignment_id},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return {"ok": True}
 
 
 @api.post("/notes/{note_id}/amend", response_model=NoteOut)
@@ -4209,6 +4342,8 @@ async def seed_demo():
         await db.protocol_templates.create_index([("builtin", 1), ("title", 1)])
         await db.protocol_enrollments.create_index("client_id")
         await db.protocol_enrollments.create_index("practitioner_id")
+        await db.client_supplement_assignments.create_index([("client_id", 1), ("active", 1)])
+        await db.client_supplement_assignments.create_index([("client_id", 1), ("sheet_id", 1)], unique=False)
         await db.protocol_enrollments.create_index("status")
     except Exception as e:
         logger.warning("Index creation warning: %s", e)
