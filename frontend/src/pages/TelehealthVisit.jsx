@@ -10,23 +10,10 @@ import { useToast } from "../hooks/use-toast";
 import {
   Video, Mic, MicOff, VideoOff, PhoneOff, ArrowLeft,
   ShieldCheck, AlertCircle, Loader2, CheckCircle2, MonitorUp,
-  MessageSquare, Send, Circle, Square,
+  MessageSquare, Send, Circle, Square, Sparkles, FileText, Save,
 } from "lucide-react";
 
-/**
- * Self-hosted WebRTC telehealth visit.
- *
- * Stages:
- *   loading → consent (clients only) → tech → in-call → ended
- *
- * Architecture:
- *  - WebSocket signaling at /api/ws/visit/{appt_id}?token=...
- *  - 1:1 peer connection using browser RTCPeerConnection
- *  - Provider issues the SDP offer once both peers are present.
- *  - Public STUN servers for NAT traversal.
- *  - In-call: chat sidebar (relayed via WS), screen share, recording (MediaRecorder → /visits/{id}/recording).
- */
-const ICE_SERVERS = [
+const FALLBACK_ICE = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
 ];
@@ -50,6 +37,10 @@ export default function TelehealthVisit() {
   const [chatDraft, setChatDraft] = React.useState("");
   const [chatOpen, setChatOpen] = React.useState(false);
   const [recording, setRecording] = React.useState(false);
+  const [soap, setSoap] = React.useState({ subjective: "", objective: "", assessment: "", plan: "" });
+  const [soapSavedAt, setSoapSavedAt] = React.useState(null);
+  const [soapOpen, setSoapOpen] = React.useState(false);
+  const [aiBusy, setAiBusy] = React.useState(false);
 
   const localVideoRef = React.useRef(null);
   const remoteVideoRef = React.useRef(null);
@@ -119,8 +110,8 @@ export default function TelehealthVisit() {
   // ---------- WebRTC + signaling ----------
   const sendWS = (obj) => { if (wsRef.current?.readyState === 1) wsRef.current.send(JSON.stringify(obj)); };
 
-  const newPC = (signalingStream) => {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  const newPC = (signalingStream, iceServers = FALLBACK_ICE) => {
+    const pc = new RTCPeerConnection({ iceServers });
     pc.onicecandidate = (e) => { if (e.candidate) sendWS({ type: "ice-candidate", candidate: e.candidate }); };
     pc.ontrack = (e) => {
       if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== e.streams[0]) {
@@ -141,20 +132,41 @@ export default function TelehealthVisit() {
   const startCall = async () => {
     if (!localStream) { toast({ title: "Allow camera & mic first" }); return; }
     setStage("in-call");
-    // Open WS
-    const token = localStorage.getItem(LS.access);
-    const wsUrl = API_BASE.replace(/^http/, "ws") + `/ws/visit/${id}?token=${encodeURIComponent(token)}`;
+    // Fetch ICE config + one-shot ticket (no JWT in URL)
+    let iceServers = FALLBACK_ICE;
+    let ticket = "";
+    try {
+      const cfg = await api.get("/webrtc/config");
+      if (cfg.data?.iceServers?.length) iceServers = cfg.data.iceServers;
+    } catch {}
+    try {
+      const t = await api.post(`/visits/${id}/ws-ticket`);
+      ticket = t.data?.ticket || "";
+    } catch (e) {
+      setErrMsg(e?.response?.data?.detail || "Could not authorize visit.");
+      setStage("error");
+      return;
+    }
+    const wsUrl = API_BASE.replace(/^http/, "ws") + `/ws/visit/${id}?ticket=${encodeURIComponent(ticket)}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      // load chat history
       api.get(`/visits/${id}/chat`).then((r) => {
         setChatMsgs((r.data || []).map((m) => ({ from: m.from_role, body: m.body, ts: m.ts })));
       }).catch(() => {});
+      // Provider: load any in-progress live SOAP
+      if (isProvider) {
+        api.get(`/visits/${id}/live-soap`).then((r) => setSoap({
+          subjective: r.data?.subjective || "",
+          objective: r.data?.objective || "",
+          assessment: r.data?.assessment || "",
+          plan: r.data?.plan || "",
+        })).catch(() => {});
+      }
     };
 
-    pcRef.current = newPC(localStream);
+    pcRef.current = newPC(localStream, iceServers);
 
     ws.onmessage = async (ev) => {
       let data; try { data = JSON.parse(ev.data); } catch { return; }
@@ -269,6 +281,58 @@ export default function TelehealthVisit() {
   const stopRecording = () => {
     if (recorderRef.current) recorderRef.current.stop();
     setRecording(false);
+  };
+
+  // ---------- SOAP autosave (provider only, debounced 5s) ----------
+  React.useEffect(() => {
+    if (!isProvider || stage !== "in-call") return;
+    const t = setTimeout(async () => {
+      try {
+        const r = await api.put(`/visits/${id}/live-soap`, soap);
+        setSoapSavedAt(r.data?.saved_at || new Date().toISOString());
+      } catch {}
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [soap, isProvider, stage, id]);
+
+  const autoDraftFromChat = async () => {
+    setAiBusy(true);
+    try {
+      const r = await api.post(`/visits/${id}/auto-draft`);
+      setSoap({
+        subjective: r.data.subjective || "",
+        objective: r.data.objective || "",
+        assessment: r.data.assessment || "",
+        plan: r.data.plan || "",
+      });
+      toast({ title: "Auto-draft applied (from chat)" });
+    } catch (e) { toast({ title: "Auto-draft failed", description: e?.response?.data?.detail || "" }); }
+    finally { setAiBusy(false); }
+  };
+
+  const llmDraft = async () => {
+    setAiBusy(true);
+    try {
+      const r = await api.post(`/visits/${id}/llm-soap`);
+      setSoap({
+        subjective: r.data.subjective || "",
+        objective: r.data.objective || "",
+        assessment: r.data.assessment || "",
+        plan: r.data.plan || "",
+      });
+      toast({ title: "AI SOAP draft generated" });
+    } catch (e) { toast({ title: "AI draft failed", description: e?.response?.data?.detail || "" }); }
+    finally { setAiBusy(false); }
+  };
+
+  const finalizeSoap = async () => {
+    try {
+      const r = await api.get("/appointments");
+      const a = (r.data || []).find((x) => x.id === id);
+      if (!a) return;
+      await api.post("/notes", { ...soap, client_id: a.client_id });
+      toast({ title: "SOAP note saved to chart" });
+    } catch (e) { toast({ title: "Save failed", description: e?.response?.data?.detail || "" }); }
   };
 
   const endCall = (navigateToEnd = true) => {
@@ -407,6 +471,11 @@ export default function TelehealthVisit() {
                   <MessageSquare size={16} />
                 </button>
                 {isProvider && (
+                  <button onClick={() => setSoapOpen((v) => !v)} className={`p-3 rounded-full ${soapOpen ? "bg-[#c19a4b] text-[#1f2a22]" : "bg-[#2f4a3a]"}`} title="SOAP note" data-testid="call-soap-toggle">
+                    <FileText size={16} />
+                  </button>
+                )}
+                {isProvider && (
                   <button onClick={recording ? stopRecording : startRecording} className={`p-3 rounded-full ${recording ? "bg-[#7a2a2a]" : "bg-[#2f4a3a]"}`} title="Record" data-testid="call-record-toggle">
                     {recording ? <Square size={16} fill="currentColor" /> : <Circle size={16} />}
                   </button>
@@ -423,7 +492,7 @@ export default function TelehealthVisit() {
             </div>
 
             {/* Chat sidebar */}
-            <aside className={`rounded-2xl border border-[#2f4a3a] bg-[#1a2a22] flex flex-col overflow-hidden ${chatOpen ? "" : "hidden lg:flex"}`} data-testid="call-chat-panel">
+            <aside className={`rounded-2xl border border-[#2f4a3a] bg-[#1a2a22] flex flex-col overflow-hidden ${(chatOpen && !soapOpen) ? "" : "hidden"} ${(!chatOpen && !soapOpen) ? "lg:flex" : ""}`} data-testid="call-chat-panel">
               <div className="p-3 border-b border-[#2f4a3a] eyebrow text-[#c19a4b]">Visit chat</div>
               <div className="flex-1 overflow-y-auto p-3 space-y-2 text-sm" data-testid="chat-messages">
                 {chatMsgs.length === 0 && <div className="text-[#8a9a8e] text-xs">No messages yet.</div>}
@@ -444,6 +513,48 @@ export default function TelehealthVisit() {
                 </Button>
               </form>
             </aside>
+
+            {/* SOAP sidebar (provider only) */}
+            {isProvider && soapOpen && (
+              <aside className="rounded-2xl border border-[#2f4a3a] bg-[#1a2a22] flex flex-col overflow-hidden" data-testid="call-soap-panel">
+                <div className="p-3 border-b border-[#2f4a3a] flex items-center justify-between">
+                  <span className="eyebrow text-[#c19a4b]">Live SOAP note</span>
+                  <span className="text-[10px] text-[#8a9a8e]">
+                    {soapSavedAt ? `saved ${new Date(soapSavedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "auto-saves every 5s"}
+                  </span>
+                </div>
+                <div className="flex-1 overflow-y-auto p-3 space-y-3 text-sm">
+                  {[
+                    { k: "subjective", label: "S — Subjective" },
+                    { k: "objective", label: "O — Objective" },
+                    { k: "assessment", label: "A — Assessment" },
+                    { k: "plan", label: "P — Plan" },
+                  ].map((f) => (
+                    <div key={f.k}>
+                      <Label className="text-[#c19a4b] text-[10px] uppercase tracking-widest">{f.label}</Label>
+                      <textarea
+                        rows={3}
+                        className="mt-1 w-full bg-[#0e1a14] border border-[#2f4a3a] rounded-md p-2 text-sm text-[#f6f1e6]"
+                        value={soap[f.k]}
+                        onChange={(e) => setSoap({ ...soap, [f.k]: e.target.value })}
+                        data-testid={`soap-${f.k}`}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="p-3 border-t border-[#2f4a3a] grid grid-cols-2 gap-2">
+                  <Button onClick={autoDraftFromChat} disabled={aiBusy} variant="outline" size="sm" className="rounded-full text-xs border-[#c19a4b] text-[#c19a4b] hover:bg-[#c19a4b] hover:text-[#1f2a22]" data-testid="soap-auto-draft">
+                    From chat
+                  </Button>
+                  <Button onClick={llmDraft} disabled={aiBusy} size="sm" className="rounded-full text-xs bg-[#c19a4b] text-[#1f2a22] hover:bg-[#a8853f]" data-testid="soap-llm-draft">
+                    <Sparkles size={12} className="mr-1" /> {aiBusy ? "…" : "AI draft"}
+                  </Button>
+                  <Button onClick={finalizeSoap} className="col-span-2 rounded-full bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6]" data-testid="soap-finalize">
+                    <Save size={12} className="mr-1" /> Save to chart
+                  </Button>
+                </div>
+              </aside>
+            )}
           </div>
         )}
 

@@ -1,0 +1,50 @@
+{
+  "summary": "Phase 7 backend fully validated: 28/28 tests pass (test_phase7.py) — ws-ticket (RBAC + 404), WS handshake via single-use ticket (4401 on reuse + invalid), legacy ?token= still works, /webrtc/config (>=2 STUN, TURN opt-in), live-soap PUT/GET round-trip + provider-only RBAC, auto-draft from chat transcript, llm-soap via Claude Sonnet 4.5 (real API call, ~11s), recurrence weekly creates 4 + DELETE series cancels them, inventory lots increment stock + expiring window, treatment commission set/clamp/admin-only, /reports/commissions admin-only + shape, /push/public-key + subscribe (nested + flat) + unsubscribe + 400 on missing endpoint. Also caught and FIXED a critical Phase 7 regression: cancel_series wrote status='cancelled' (British) but AppointmentOut Literal accepts only 'canceled' (American) — every list endpoint started returning 500 ResponseValidationError after the recurrence test ran. Fixed in /app/backend/server.py:2759 + repaired 15 corrupt rows in db.appointments. Frontend Phase 7 UI testids verified in source (call-soap-toggle, call-soap-panel, soap-{S,O,A,P}, soap-{auto-draft,llm-draft,finalize}, appt-recur-{weekly,biweekly,monthly}, inv-lot-{id,number,qty,expiry,save}, expiring-banner, treatment-commission-{id}, comm-input-{id}, commission-save). Could not exercise every dialog visually because the seed DB has 0 inventory items, 0 treatments, and 0 future appointments at the moment of the run — but every backend path each dialog calls is covered by the 28 pytest cases. Routes confirmed: /portal/admin/inventory, /portal/admin/treatments (admin-only), /portal/provider/appointments, /portal/visit/:id.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/appointments (regression caused by Phase 7)", "issue": "DELETE /api/appointments/series/{id} wrote status='cancelled' which is NOT in the AppointmentOut Literal — every subsequent GET /api/appointments returned 500 ResponseValidationError. FIXED by tester (server.py:2759 + DB repair: 15 rows updated)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "AppointmentsEHR / Schedule load", "issue": "Was showing 'Failed to load schedule' toast across the app due to the cancelled/canceled regression above. Root-caused and fixed.", "affected_selectors": ["appts-today-strip", "appts-cell-*"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase7.py",
+    "/app/test_reports/pytest/phase7_results.xml"
+  ],
+  "action_items": [
+    "Verify the cancelled→canceled fix in server.py:2759 stays in a future refactor (also consider migrating to the proper AppointmentStatus enum so this kind of typo is impossible).",
+    "Carry-over from iteration_3: NewAppointmentDialog still uses SelectItem value 'in_clinic' but AppointmentIn.visit_mode Literal expects 'in_person' / 'telehealth' — submitting 'In clinic' from UI will 422.",
+    "Carry-over: TelehealthVisit header reads appt.start_time instead of appt.start.",
+    "Phase 7 frontend dialogs (Lot, Commission, Recurrence) could not be exercised through the UI because seed DB had no rows; consider adding a small UI smoke seed (1 inventory item, 1 treatment, 1 future appointment) to make E2E testing reproducible.",
+    "Wire push notifications: infrastructure (subscribe/unsubscribe/public-key) is solid but no broadcast triggers exist anywhere — out of scope per request, just flagging."
+  ],
+  "critical_code_review_comments": [
+    "BUG FIXED by tester (HIGH): /app/backend/server.py cancel_series() set status='cancelled' (British). AppointmentOut Pydantic Literal in /app/backend/models.py only accepts 'canceled' (American), so any GET /api/appointments that included a cancelled-series appointment 500'd with ResponseValidationError. Fix: change to 'canceled' + repair existing rows.",
+    "Recurrence endpoint uses naive integer day-deltas (weekly=7, biweekly=14, monthly=30). 'monthly' should walk to the same day-of-month, not +30 days — drifts by 2-3 days/year and breaks DST boundaries. Use dateutil.relativedelta(months=+1).",
+    "/visits/{id}/llm-soap regex fallback `r\"\\{.*\\}\"` returns the OUTERMOST braces; if Claude wraps JSON in code-fence prose, the parser can grab non-JSON. Consider `response.strip().removeprefix('```json').removeprefix('```').removesuffix('```')` first.",
+    "/push/subscribe accepts both nested {subscription:{...}} and flat shapes — good — but never validates `keys.p256dh`/`keys.auth` are present, so a malformed sub will quietly succeed and later fail when sending a push.",
+    "WS ticket TTL is 60s + ws_tickets collection has no TTL index. Will accumulate unbounded; add db.ws_tickets.create_index('expires_at', expireAfterSeconds=0) at startup.",
+    "server.py is now 2933 lines — refactor still deferred (carry-over)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase7.py (new, 28 tests, includes async WS via websockets lib)",
+    "/app/backend/server.py (fixed cancel_series cancelled->canceled, 1-line)",
+    "MongoDB db.appointments: bulk-fixed 15 rows status='cancelled' -> 'canceled'"
+  ],
+  "success_rate": {
+    "backend": "100% (28/28 phase7) + GET /api/appointments restored to 200",
+    "frontend": "100% testid presence verified in source; runtime UI dialogs not opened due to empty seed (0 inventory/treatments/future appts)"
+  },
+  "test_credentials": "Admin tallyravello@gmail.com / TEST123, Practitioner ravello@natmedsol.local / Ravello!2345, Client test_client_phase7@example.com / ClientPass123!",
+  "seed_data_creation": "Created TEST P7 client + telehealth appointment + recurring weekly series (then cancelled) + TEST P7 Magnesium inventory item with LOT-P7-001 (qty 10, expires +30d) + TEST P7 Treatment (if absent) with 100% commission to practitioner. Push subscriptions for admin (test endpoints) created and cleaned up.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 7 backend is fully covered by /app/backend/tests/test_phase7.py (28 tests, mix of sync requests + async websockets). Run with: cd /app && export REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL frontend/.env | cut -d= -f2) && export EMERGENT_LLM_KEY=$(grep EMERGENT_LLM_KEY backend/.env | cut -d= -f2) && pytest backend/tests/test_phase7.py --asyncio-mode=auto. NOTE: when running ALL phase{4,5,6,7} suites together the WS tests can intermittently timeout during handshake under load — running per-file is reliable. Phase 7 introduced one HIGH bug already fixed (cancelled->canceled spelling); watch for similar Literal mismatches in future PRs.",
+  "rca of the issue": "ROOT CAUSE: /app/backend/server.py cancel_series() persisted status='cancelled' (British) into db.appointments. /app/backend/models.py AppointmentOut.status: Literal['requested','confirmed','completed','canceled','no_show'] — does NOT include 'cancelled'. FastAPI's response_model=List[AppointmentOut] then re-validated the GET /api/appointments output and raised ResponseValidationError -> 500 for every consumer (provider Appointments page, Up Next, calendar). Reproduction: POST /api/appointments/{id}/recurrence (count=4) -> DELETE /api/appointments/series/{series_id} -> GET /api/appointments returns 500. Mitigation: changed 'cancelled' to 'canceled' in server.py:2759 and ran a one-shot Mongo update_many to repair existing 15 polluted rows. All Phase 7 tests + appointment listing now green."
+}

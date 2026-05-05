@@ -9,7 +9,7 @@ import os
 import io
 import logging
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 
 from models import (
@@ -38,7 +38,6 @@ from models import (
     ProfileUpdate, PasswordChange,
     new_id,
 )
-from datetime import timedelta
 import httpx
 import csv
 import io as _io
@@ -2382,19 +2381,30 @@ from fastapi import WebSocket, WebSocketDisconnect
 _visit_rooms = {}
 
 @api.websocket("/ws/visit/{appt_id}")
-async def ws_visit(websocket: WebSocket, appt_id: str, token: str = Query(...)):
-    """WebRTC signaling + chat relay for a 1:1 visit.
-    Forwards messages between the two participants (provider and client).
-    Roles: 'provider' or 'client' from the JWT.
-    """
-    # Authenticate via token query param
-    try:
-        payload = decode_token(token)
-        u = await db.users.find_one({"id": payload.get("sub")})
-        if not u:
+async def ws_visit(websocket: WebSocket, appt_id: str,
+                    token: Optional[str] = Query(None),
+                    ticket: Optional[str] = Query(None)):
+    """WebRTC signaling + chat relay. Auth via one-shot ticket (preferred) or JWT token (legacy)."""
+    u = None
+    if ticket:
+        # One-shot ticket — burned on first use
+        t = await db.ws_tickets.find_one_and_update(
+            {"ticket": ticket, "appointment_id": appt_id, "used": False,
+             "expires_at": {"$gte": datetime.now(timezone.utc)}},
+            {"$set": {"used": True, "used_at": datetime.now(timezone.utc)}},
+        )
+        if not t:
             await websocket.close(code=4401)
             return
-    except Exception:
+        u = await db.users.find_one({"id": t["user_id"]})
+    elif token:
+        try:
+            payload = decode_token(token)
+            u = await db.users.find_one({"id": payload.get("sub")})
+        except Exception:
+            await websocket.close(code=4401)
+            return
+    if not u:
         await websocket.close(code=4401)
         return
 
@@ -2519,6 +2529,360 @@ async def upload_visit_recording(
                     metadata={"size": len(contents)},
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
     return {"file_id": fid, "size": len(contents)}
+
+
+# ---------- WS auth hardening: one-shot signed handshake ticket ----------
+import secrets as _secrets
+
+@api.post("/visits/{appt_id}/ws-ticket")
+async def issue_ws_ticket(appt_id: str, user=Depends(get_current_user)):
+    """Issue a one-shot ticket (60s TTL) so the WebSocket handshake never carries a JWT."""
+    a = await db.appointments.find_one({"id": appt_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    if user["role"] == "client":
+        sc = await _resolve_self_client(user)
+        if not sc or a.get("client_id") != sc["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    ticket = _secrets.token_urlsafe(32)
+    await db.ws_tickets.insert_one({
+        "ticket": ticket, "appointment_id": appt_id,
+        "user_id": user["id"], "user_role": user["role"],
+        "created_at": datetime.now(timezone.utc),
+        "expires_at": datetime.now(timezone.utc) + timedelta(seconds=60),
+        "used": False,
+    })
+    return {"ticket": ticket, "expires_in": 60}
+
+
+# ---------- WebRTC ICE config (STUN + optional TURN) ----------
+@api.get("/webrtc/config")
+async def webrtc_config(user=Depends(get_current_user)):
+    """Return ICE servers — STUN public + optional self-hosted coturn from env."""
+    servers = [
+        {"urls": "stun:stun.l.google.com:19302"},
+        {"urls": "stun:stun1.l.google.com:19302"},
+    ]
+    turn_url = os.environ.get("TURN_URL")
+    if turn_url:
+        entry = {"urls": turn_url}
+        if os.environ.get("TURN_USERNAME"):
+            entry["username"] = os.environ["TURN_USERNAME"]
+        if os.environ.get("TURN_PASSWORD"):
+            entry["credential"] = os.environ["TURN_PASSWORD"]
+        servers.append(entry)
+    return {"iceServers": servers}
+
+
+# ---------- In-call SOAP autosave (provider-only) ----------
+@api.put("/visits/{appt_id}/live-soap")
+async def save_live_soap(appt_id: str, payload: dict,
+                          user=Depends(require_roles("practitioner", "admin"))):
+    a = await db.appointments.find_one({"id": appt_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    update = {
+        "appointment_id": appt_id,
+        "client_id": a.get("client_id"),
+        "provider_id": user["id"],
+        "subjective": payload.get("subjective", ""),
+        "objective": payload.get("objective", ""),
+        "assessment": payload.get("assessment", ""),
+        "plan": payload.get("plan", ""),
+        "updated_at": datetime.now(timezone.utc),
+    }
+    await db.live_soap_drafts.update_one(
+        {"appointment_id": appt_id, "provider_id": user["id"]},
+        {"$set": update, "$setOnInsert": {"id": new_id(), "created_at": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+    return {"saved_at": update["updated_at"].isoformat()}
+
+
+@api.get("/visits/{appt_id}/live-soap")
+async def get_live_soap(appt_id: str, user=Depends(require_roles("practitioner", "admin"))):
+    d = await db.live_soap_drafts.find_one({"appointment_id": appt_id, "provider_id": user["id"]})
+    return _strip_id(d) if d else {"subjective": "", "objective": "", "assessment": "", "plan": ""}
+
+
+# ---------- Auto-draft visit summary from chat transcript ----------
+@api.post("/visits/{appt_id}/auto-draft")
+async def auto_draft_summary(appt_id: str, user=Depends(require_roles("practitioner", "admin"))):
+    """Stitch chat transcript into a SOAP-shaped draft (rule-based, no LLM)."""
+    a = await db.appointments.find_one({"id": appt_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    msgs = await db.visit_chat.find({"appointment_id": appt_id}).sort("ts", 1).to_list(500)
+    client_lines = [m.get("body", "") for m in msgs if m.get("from_role") == "client"]
+    provider_lines = [m.get("body", "") for m in msgs if m.get("from_role") == "provider"]
+    subjective = " ".join(client_lines)[:2000]
+    objective = "Telehealth visit · video and audio established · provider observed client throughout the visit."
+    assessment = " ".join(provider_lines[: max(1, len(provider_lines) // 2)])[:1500]
+    plan = " ".join(provider_lines[max(1, len(provider_lines) // 2):])[:1500]
+    return {
+        "subjective": subjective or "Client reported concerns during telehealth visit.",
+        "objective": objective,
+        "assessment": assessment or "Pending provider assessment.",
+        "plan": plan or "Plan to be finalized by provider.",
+        "source": "chat_transcript",
+        "message_count": len(msgs),
+    }
+
+
+# ---------- LLM-assisted SOAP draft (Claude Sonnet 4.5 via Emergent LLM Key) ----------
+@api.post("/visits/{appt_id}/llm-soap")
+async def llm_soap_draft(appt_id: str, user=Depends(require_roles("practitioner", "admin"))):
+    """Use Claude Sonnet 4.5 to draft a SOAP note from intake + last note + chat."""
+    a = await db.appointments.find_one({"id": appt_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    client = await db.clients.find_one({"id": a.get("client_id")})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    intake = await db.intakes.find_one({"client_id": client["id"]}, sort=[("created_at", -1)]) or {}
+    last_note = await db.visit_notes.find_one(
+        {"client_id": client["id"]}, sort=[("created_at", -1)]
+    )
+    msgs = await db.visit_chat.find({"appointment_id": appt_id}).sort("ts", 1).to_list(500)
+    transcript = "\n".join(
+        f"[{m.get('from_role','?')}] {m.get('body','')}" for m in msgs
+    )[:6000]
+
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="LLM key not configured")
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        sys_msg = (
+            "You are a clinical-documentation assistant helping a wellness practitioner "
+            "draft a SOAP note from a telehealth visit. Output STRICT JSON with keys "
+            "'subjective','objective','assessment','plan'. Keep each <250 words. "
+            "Avoid medical diagnoses; this is a wellness setting. Never invent vitals you weren't told."
+        )
+        client_summary = (
+            f"Client: {client.get('full_name','')} (MRN {client.get('mrn','')}). "
+            f"Pronouns: {client.get('pronouns','—')}. "
+            f"Primary concern: {client.get('primary_concern','—')}. "
+            f"Wellness goals: {client.get('wellness_goals','—')}. "
+            f"Allergies: {client.get('allergies','—')}. "
+            f"Current supplements: {client.get('current_supplements','—')}."
+        )
+        intake_summary = ""
+        if intake:
+            intake_summary = "Recent intake answers:\n" + "\n".join(
+                f"- {k}: {v}" for k, v in (intake.get("answers") or {}).items()
+            )[:1500]
+        last_summary = ""
+        if last_note:
+            last_summary = (
+                "Previous SOAP note:\n"
+                f"S: {last_note.get('subjective','')[:400]}\n"
+                f"A: {last_note.get('assessment','')[:400]}\n"
+                f"P: {last_note.get('plan','')[:400]}"
+            )
+        prompt = f"""{client_summary}
+
+{intake_summary}
+
+{last_summary}
+
+In-call chat transcript:
+{transcript or '(no chat messages were exchanged)'}
+
+Produce a SOAP draft as STRICT JSON only — no commentary."""
+        chat = LlmChat(
+            api_key=api_key,
+            session_id=f"soap-{appt_id}",
+            system_message=sys_msg,
+        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        response = await chat.send_message(UserMessage(text=prompt))
+        # Robust JSON extraction
+        import json as _json
+        import re as _re
+        m = _re.search(r"\{.*\}", response, _re.DOTALL)
+        data = _json.loads(m.group(0)) if m else {}
+        return {
+            "subjective": data.get("subjective", "")[:4000],
+            "objective": data.get("objective", "")[:4000],
+            "assessment": data.get("assessment", "")[:4000],
+            "plan": data.get("plan", "")[:4000],
+            "source": "llm",
+            "model": "claude-sonnet-4-5-20250929",
+        }
+    except Exception as e:
+        logger.warning("LLM SOAP draft failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"LLM error: {e}")
+
+
+# ---------- Recurring appointments ----------
+@api.post("/appointments/{appt_id}/recurrence")
+async def set_recurrence(appt_id: str, payload: dict,
+                          user=Depends(require_roles("practitioner", "admin", "staff"))):
+    """Generate a recurring series. Body: {pattern: 'weekly'|'biweekly'|'monthly', count: int}"""
+    pattern = payload.get("pattern", "weekly")
+    count = max(1, min(int(payload.get("count", 4)), 26))
+    parent = await db.appointments.find_one({"id": appt_id})
+    if not parent:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    series_id = parent.get("series_id") or new_id()
+    await db.appointments.update_one({"id": appt_id}, {"$set": {"series_id": series_id, "series_pattern": pattern}})
+
+    delta_days = {"weekly": 7, "biweekly": 14, "monthly": 30}.get(pattern, 7)
+    created = []
+    base_start = parent["start"]
+    base_end = parent["end"]
+    for i in range(1, count + 1):
+        new_start = base_start + timedelta(days=delta_days * i)
+        new_end = base_end + timedelta(days=delta_days * i)
+        doc = {**{k: v for k, v in parent.items() if k != "_id"},
+               "id": new_id(),
+               "start": new_start, "end": new_end,
+               "series_id": series_id,
+               "series_pattern": pattern,
+               "status": "scheduled",
+               "created_at": datetime.now(timezone.utc)}
+        await db.appointments.insert_one(doc)
+        created.append(doc["id"])
+    await log_audit(db, user["id"], user["email"], "appointment.recurrence",
+                    resource_type="appointment", resource_id=appt_id,
+                    metadata={"pattern": pattern, "count": count, "series_id": series_id})
+    return {"series_id": series_id, "created": created, "pattern": pattern}
+
+
+@api.delete("/appointments/series/{series_id}")
+async def cancel_series(series_id: str,
+                         user=Depends(require_roles("practitioner", "admin", "staff"))):
+    """Cancel all FUTURE appointments in a series."""
+    now = datetime.now(timezone.utc)
+    res = await db.appointments.update_many(
+        {"series_id": series_id, "start": {"$gte": now}, "status": {"$ne": "completed"}},
+        {"$set": {"status": "canceled"}},
+    )
+    return {"cancelled": res.modified_count}
+
+
+# ---------- Inventory lots / expiration ----------
+@api.post("/inventory/{item_id}/lots")
+async def add_inventory_lot(item_id: str, payload: dict,
+                             user=Depends(require_roles("admin", "staff"))):
+    item = await db.inventory_items.find_one({"id": item_id})
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    lot = {
+        "id": new_id(),
+        "lot_number": payload.get("lot_number", ""),
+        "qty": int(payload.get("qty", 0)),
+        "expires_on": payload.get("expires_on"),  # ISO date string
+        "received_on": payload.get("received_on", datetime.now(timezone.utc).isoformat()),
+        "note": payload.get("note", ""),
+    }
+    await db.inventory_items.update_one(
+        {"id": item_id},
+        {"$push": {"lots": lot}, "$inc": {"stock": lot["qty"]}},
+    )
+    await log_audit(db, user["id"], user["email"], "inventory.lot_add",
+                    resource_type="inventory_item", resource_id=item_id,
+                    metadata={"lot": lot})
+    return lot
+
+
+@api.get("/inventory/expiring")
+async def list_expiring(days: int = 60,
+                         user=Depends(require_roles("admin", "staff", "practitioner"))):
+    """Items with at least one lot expiring within `days`."""
+    cutoff = (datetime.now(timezone.utc) + timedelta(days=days)).date().isoformat()
+    items = await db.inventory_items.find({}).to_list(500)
+    out = []
+    for it in items:
+        for lot in it.get("lots", []) or []:
+            if lot.get("expires_on") and lot["expires_on"] <= cutoff:
+                out.append({**_strip_id(it), "expiring_lot": lot})
+                break
+    return out
+
+
+# ---------- Commission split ----------
+@api.put("/treatments/{tx_id}/commission")
+async def set_treatment_commission(tx_id: str, payload: dict,
+                                    user=Depends(require_roles("admin"))):
+    """Set per-practitioner commission %. Body: {commissions: [{practitioner_id, percent}]}"""
+    items = payload.get("commissions") or []
+    cleaned = []
+    for c in items:
+        pct = float(c.get("percent", 0))
+        cleaned.append({
+            "practitioner_id": c.get("practitioner_id"),
+            "percent": max(0.0, min(100.0, pct)),
+        })
+    await db.treatments.update_one({"id": tx_id}, {"$set": {"commissions": cleaned}})
+    return {"commissions": cleaned}
+
+
+@api.get("/reports/commissions")
+async def commission_report(days: int = 30,
+                             user=Depends(require_roles("admin"))):
+    """Per-practitioner commission earned from POS treatment lines in the window."""
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=days)
+    txns = await db.transactions.find(
+        {"status": "paid", "created_at": {"$gte": start, "$lt": end}}
+    ).to_list(2000)
+    treatments = await db.treatments.find().to_list(500)
+    tx_map = {t["id"]: t for t in treatments}
+    users = await db.users.find({"role": {"$in": ["practitioner", "admin"]}}).to_list(500)
+    pname = {u["id"]: u.get("full_name", u["email"]) for u in users}
+
+    earnings = {}
+    for t in txns:
+        for line in t.get("lines", []) or []:
+            if line.get("type") != "treatment":
+                continue
+            tx = tx_map.get(line.get("ref_id"))
+            if not tx:
+                continue
+            line_total = (line.get("line_total")
+                          or (line.get("qty", 1) * line.get("unit_price", 0)))
+            for c in tx.get("commissions", []) or []:
+                pid = c.get("practitioner_id")
+                if not pid:
+                    continue
+                amt = round(line_total * (c.get("percent", 0) / 100.0), 2)
+                earnings.setdefault(pid, {"practitioner_id": pid, "name": pname.get(pid, pid),
+                                          "earned": 0.0, "lines": 0})
+                earnings[pid]["earned"] = round(earnings[pid]["earned"] + amt, 2)
+                earnings[pid]["lines"] += 1
+    return {"window_days": days, "earnings": sorted(earnings.values(), key=lambda x: -x["earned"])}
+
+
+# ---------- Web push (VAPID) ----------
+@api.get("/push/public-key")
+async def push_public_key():
+    return {"public_key": os.environ.get("VAPID_PUBLIC_KEY", "")}
+
+
+@api.post("/push/subscribe")
+async def push_subscribe(payload: dict, user=Depends(get_current_user)):
+    sub = payload.get("subscription") or payload  # accept either shape
+    if not sub.get("endpoint"):
+        raise HTTPException(status_code=400, detail="Missing subscription endpoint")
+    await db.push_subscriptions.update_one(
+        {"user_id": user["id"], "endpoint": sub["endpoint"]},
+        {"$set": {
+            "user_id": user["id"], "endpoint": sub["endpoint"],
+            "keys": sub.get("keys", {}),
+            "updated_at": datetime.now(timezone.utc),
+        }, "$setOnInsert": {"created_at": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@api.post("/push/unsubscribe")
+async def push_unsubscribe(payload: dict, user=Depends(get_current_user)):
+    endpoint = payload.get("endpoint")
+    if endpoint:
+        await db.push_subscriptions.delete_one({"user_id": user["id"], "endpoint": endpoint})
+    return {"ok": True}
 
 
 # =================== STARTUP ===================

@@ -247,6 +247,35 @@ export default function AppointmentsEHR() {
                     className="block mt-2 text-sm text-[#2f4a3a] hover:underline">
                     Open client chart →
                   </Link>
+
+                  <div className="mt-4 pt-4 border-t border-[#e7dfc9]">
+                    <div className="eyebrow text-[#8a6a3c] mb-2">Make recurring</div>
+                    <div className="flex gap-2 flex-wrap">
+                      {[
+                        { p: "weekly", label: "Weekly × 4" },
+                        { p: "biweekly", label: "Bi-weekly × 4" },
+                        { p: "monthly", label: "Monthly × 3" },
+                      ].map((opt) => (
+                        <Button
+                          key={opt.p}
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs rounded-full border-[#c19a4b] text-[#8a6a3c]"
+                          data-testid={`appt-recur-${opt.p}`}
+                          onClick={async () => {
+                            try {
+                              const count = opt.p === "monthly" ? 3 : 4;
+                              await api.post(`/appointments/${selected.id}/recurrence`, { pattern: opt.p, count });
+                              toast({ title: `Created ${count} ${opt.p} occurrences` });
+                              setSelected(null); load();
+                            } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+                          }}
+                        >
+                          {opt.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             </>
