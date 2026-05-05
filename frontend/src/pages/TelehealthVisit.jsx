@@ -203,7 +203,7 @@ export default function TelehealthVisit() {
         </Link>
         <div className="text-sm">
           <span className="text-[#8a9a8e]">Telehealth visit</span>
-          {appt && <span className="ml-3 text-[#f6f1e6]">{new Date(appt.start_time).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span>}
+          {appt && <span className="ml-3 text-[#f6f1e6]">{new Date(appt.start).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span>}
         </div>
         <div className="text-xs text-[#8a9a8e]">{user?.email}</div>
       </div>
