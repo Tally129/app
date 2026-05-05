@@ -171,7 +171,7 @@ export default function Home() {
             IMD · ND · PhD · MH · CNC
           </p>
           <p className="mt-5 text-[15px] leading-relaxed max-w-2xl text-[#e8e1c9]">
-            Dr. Ravello is board-certified by the American Naturopathic Medical Certification Board with over 29 years of experience in private practice and hospital outpatient care. She currently welcomes new patients in Roswell, Alpharetta and Atlanta.
+            Dr. Ravello is board-certified by the American Naturopathic Medical Certification Board with 36 years in practice across private clinics and hospital outpatient care. She currently welcomes new patients in Roswell, Alpharetta and Atlanta.
           </p>
           <div className="mt-7">
             <Link to="/request-appointment">

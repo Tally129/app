@@ -1,0 +1,59 @@
+{
+  "summary": "Phase 12 — Logo swap + '36 years' copy + Protocols AI Transcribe/Generate. Found and fixed a CRITICAL runtime bug in Protocols.jsx (missing useState('showAi') declaration crashed the entire /portal/*/protocols page). After the fix, all acceptance criteria pass: logo PNG renders across Home/Login/Staff-login/Portal sidebar, '36 years in practice' copy is present (no '29 years' anywhere), 3 protocol header CTAs are in the correct order, AI Generate end-to-end UI flow returns a pre-filled editor with title='6-Week Liver Detox with Weekly IV Vitamin C', weeks=6, spw=1, 30 recommended foods, AI Transcribe dialog opens with a file input accepting .pdf/.docx/.txt. Backend 13/13 pytest pass including RBAC (staff+client get 403 on /generate and /transcribe) and regression smoke (/api/forms/transcribe, /api/protocols/templates, /api/auth/login×4, /api/protocols/enrollments).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Protocols.jsx", "issue": "Missing `const [showAi, setShowAi] = React.useState(null)` — caused ReferenceError: showAi is not defined and crashed the Protocols page for admin/practitioner/staff whenever they tried to load /portal/*/protocols. Fixed by the testing agent (trivial 1-line addition).", "selector": "N/A (runtime JS error)", "priority": "CRITICAL (was blocking)"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results_backend": [
+    {"test": "Admin / Practitioner / Staff / alt-admin login (4 roles)", "result": "PASS (4/4)"},
+    {"test": "POST /api/protocols/generate as practitioner (6-week liver detox prompt) → 200 with weeks=6, spw=1, 17+ foods_recommended, 11+ foods_avoid", "result": "PASS"},
+    {"test": "POST /api/protocols/generate as staff → 403", "result": "PASS"},
+    {"test": "POST /api/protocols/generate as client → 403", "result": "PASS"},
+    {"test": "POST /api/protocols/transcribe as practitioner with supplied Detox Protocol DOCX → 200 with title containing 'detox' and 51 foods_recommended (>10)", "result": "PASS"},
+    {"test": "POST /api/protocols/transcribe as staff → 403", "result": "PASS"},
+    {"test": "POST /api/protocols/transcribe as client → 403", "result": "PASS"},
+    {"test": "GET /api/protocols/templates returns built-in NMS Detox", "result": "PASS"},
+    {"test": "POST /api/protocols/enrollments (regression)", "result": "PASS"},
+    {"test": "POST /api/forms/transcribe (regression as practitioner) → 200 with parsed title", "result": "PASS"}
+  ],
+  "test_results_frontend": [
+    {"step": "Home / — <img alt='Natural Medical Solutions' src='/nms-logo.png'> renders (no SVG)", "result": "PASS"},
+    {"step": "Home / — '36 YEARS IN PRACTICE' pill present, '29 years' and '29+' absent", "result": "PASS"},
+    {"step": "Home / — Meet Dr. Ravello bio contains '36 years in practice' (not 29)", "result": "PASS"},
+    {"step": "GET /nms-logo.png → 200, content-type=image/png", "result": "PASS"},
+    {"step": "/login renders logo img", "result": "PASS"},
+    {"step": "/staff-login renders logo img", "result": "PASS"},
+    {"step": "Portal sidebar renders logo img (after provider login)", "result": "PASS"},
+    {"step": "/portal/admin/protocols — 3 header CTAs in order: protocol-ai-transcribe-btn, protocol-ai-generate-btn, protocol-new-tpl-btn", "result": "PASS"},
+    {"step": "protocol-ai-generate-btn → dialog → protocol-ai-prompt → protocol-ai-submit → AI call returns 200 → Protocol Template Editor opens pre-filled: title='6-Week Liver Detox with Weekly IV Vitamin C', weeks=6, spw=1, 30 recommended foods", "result": "PASS"},
+    {"step": "protocol-ai-transcribe-btn → dialog → protocol-ai-file-input visible with accept='.pdf,.docx,.txt'", "result": "PASS"}
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_phase12_protocols_ai.py",
+    "/app/test_reports/pytest/phase12.xml"
+  ],
+  "action_items": [
+    "Review the one-line fix committed by the testing agent in /app/frontend/src/pages/portal/Protocols.jsx (added: `const [showAi, setShowAi] = React.useState(null);` right after `openEnr` state on line 46). Consider whether this should have been caught by lint/a quick smoke load before shipping."
+  ],
+  "critical_code_review_comments": [
+    "CRITICAL (already fixed by tester): Protocols.jsx referenced `showAi` and `setShowAi` in JSX (lines ~93, 101, 283-287) and in the `<ProtocolAiAssistDialog mode={showAi} …>` render path but never declared the corresponding useState hook. Entire page crashed with ReferenceError. Trivial but fatal — suggests the feature was added without loading the page once. Recommend adding an ESLint rule `no-undef` / `react/jsx-no-undef` to CI.",
+    "Design: `/api/forms/transcribe` allows staff role (server.py L3282 — require_roles('admin','practitioner','staff')) whereas `/api/protocols/transcribe` + `/api/protocols/generate` only allow admin+practitioner. If this divergence is intentional (staff can transcribe forms but not protocols), fine — but worth confirming in PRD.",
+    "`/api/forms/transcribe` parses the DOCX before the RBAC guard is rejected (parse errors surface as 400 before the 403 for unauthorized roles). Not a security issue since the guard is still applied via Depends, but it slightly leaks 'file is malformed' info to clients who shouldn't reach parse. Consider moving validation after auth checks for consistency.",
+    "ProtocolAiAssistDialog state resets on `mode` change (good), but the parent conditional `setEditingTpl({ ...draft, active: true })` clobbers any unsaved edits if a user already had the editor open. Low likelihood, not blocking."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/portal/Protocols.jsx (added missing useState for showAi — 1 line)",
+    "/app/backend/tests/test_phase12_protocols_ai.py (new)"
+  ],
+  "success_rate": {"backend": "100% (13/13 pytest)", "frontend": "100% (10/10 UI checks after the showAi fix)"},
+  "test_credentials": "admin@natmedsol.local / Admin!2345; ravello@natmedsol.local / Ravello!2345; frontdesk@natmedsol.local / FrontDesk!2345; tallyravello@gmail.com / TEST123; ephemeral patient created via /auth/register (TEST_p12_*)",
+  "seed_data_creation": "2 ephemeral enrollments on built-in NMS Detox template (TEST Phase12 Patient) via the regression test. Created 1 TEST patient user via /auth/register. No test_templates created on the server (AI draft was closed without saving).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 12 is green. The showAi missing-state bug has already been fixed by the testing agent in /app/frontend/src/pages/portal/Protocols.jsx line 46. Backend endpoints POST /api/protocols/transcribe (multipart) and POST /api/protocols/generate (JSON {prompt}) are practitioner+admin only (staff/client → 403). Claude 4.5 via Emergent LLM key responds in ~6-15s — use ≥30s timeouts on UI and ≥45s on backend tests. The Detox DOCX fixture URL (https://customer-assets.emergentagent.com/job_design-158/artifacts/cwfz3lyv_Detox%20Protocol%20Template.docx) is reachable without auth.",
+  "rca of the issue": "RCA — Protocols page crash: Developer added the `AI Transcribe` / `AI Generate` CTAs and the `<ProtocolAiAssistDialog>` render block that both reference `showAi` state, but forgot to add the corresponding `React.useState(null)` hook inside the Protocols() component. React evaluated the JSX `mode={showAi}` at render and threw `ReferenceError: showAi is not defined`, and because there is no ErrorBoundary above PortalLayout, the entire Protocols page unmounted to the default dev overlay. Reproduction: load /portal/admin/protocols (any provider role) — the page shows 'Uncaught runtime errors: showAi is not defined' full-screen overlay. Mitigation applied by tester: added `const [showAi, setShowAi] = React.useState(null);` on line 46 (right after the `openEnr` state declaration). Verified post-fix: all 3 header CTAs render, AI Generate completes end-to-end, AI Transcribe dialog opens with file input."
+}

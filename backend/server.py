@@ -3613,6 +3613,116 @@ async def delete_protocol_template(tpl_id: str, request: Request,
     return {"ok": True}
 
 
+# ---- Protocol AI helpers ----
+
+
+async def _llm_protocol_transcribe(source_text: str, hint_title: Optional[str] = None) -> dict:
+    """Use Claude 4.5 to convert raw protocol text into our protocol template schema."""
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="LLM key not configured")
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"emergentintegrations unavailable: {e}")
+
+    sys_msg = (
+        "You convert wellness/detox/treatment protocol documents into a STRICT JSON object. "
+        "Output JSON only — no commentary, no markdown.\n\n"
+        "Schema:\n"
+        "{\n"
+        '  "title": "short title (max 80 chars)",\n'
+        '  "description": "1–2 sentence summary",\n'
+        '  "weeks": <int 1-52, default 4>,\n'
+        '  "sessions_per_week": <int 1-14, default 1>,\n'
+        '  "treatment_label": "Detox treatment | IV therapy | Massage | etc.",\n'
+        '  "daily_outline": "markdown-formatted daily routine (breakfast/lunch/dinner if relevant)",\n'
+        '  "foods_recommended": ["item1", "item2", ...],\n'
+        '  "foods_avoid": ["item1", "item2", ...],\n'
+        '  "lifestyle": "lifestyle bullets, newlines OK",\n'
+        '  "supplements": [{"name": "...", "dose": "...", "frequency": "...", "notes": "..."}]\n'
+        "}\n\n"
+        "Rules: Detect duration explicitly stated in the document if any (e.g., '6-week detox' → weeks=6). "
+        "Detect frequency (e.g., 'twice weekly treatments' → sessions_per_week=2). "
+        "If the document only describes nutrition/lifestyle without explicit treatment cadence, default weeks=4, sessions_per_week=1. "
+        "Pull bullet lists for foods_recommended and foods_avoid as JSON arrays of short strings. "
+        "Keep daily_outline concise — under 1500 chars."
+    )
+
+    chat = LlmChat(
+        api_key=api_key,
+        session_id=f"protocol-transcribe-{new_id()[:8]}",
+        system_message=sys_msg,
+    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+    response = await chat.send_message(UserMessage(text=f"Source:\n\n{source_text[:18000]}"))
+
+    import re as _re
+    m = _re.search(r"\{.*\}", response, _re.DOTALL)
+    if not m:
+        raise HTTPException(status_code=502, detail="LLM returned no JSON")
+    data = json.loads(m.group(0))
+
+    def _list(x): return [str(i)[:100] for i in (x or []) if str(i).strip()][:80]
+    def _supps(x):
+        out = []
+        for s in (x or [])[:30]:
+            if isinstance(s, dict):
+                out.append({
+                    "name": str(s.get("name", ""))[:120],
+                    "dose": str(s.get("dose", ""))[:80],
+                    "frequency": str(s.get("frequency", ""))[:80],
+                    "notes": str(s.get("notes", ""))[:200],
+                })
+        return out
+
+    weeks = int(data.get("weeks") or 4)
+    spw = int(data.get("sessions_per_week") or 1)
+    return {
+        "title": (data.get("title") or hint_title or "Untitled protocol")[:120],
+        "description": (data.get("description") or "")[:600],
+        "weeks": max(1, min(52, weeks)),
+        "sessions_per_week": max(1, min(14, spw)),
+        "treatment_label": (data.get("treatment_label") or "Treatment session")[:80],
+        "daily_outline": (data.get("daily_outline") or "")[:4000],
+        "foods_recommended": _list(data.get("foods_recommended")),
+        "foods_avoid": _list(data.get("foods_avoid")),
+        "lifestyle": (data.get("lifestyle") or "")[:2000],
+        "supplements": _supps(data.get("supplements")),
+    }
+
+
+@api.post("/protocols/transcribe")
+async def transcribe_protocol(file: UploadFile = File(...),
+                              user=Depends(require_roles("admin", "practitioner"))):
+    """Upload a PDF/DOCX/TXT protocol document and AI-transcribe it into our schema."""
+    data = await file.read()
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 8 MB)")
+    text = _extract_text_from_upload(file.filename or "", data)
+    if not text or len(text) < 30:
+        raise HTTPException(status_code=400, detail="Document appears empty after extraction")
+    result = await _llm_protocol_transcribe(text, hint_title=(file.filename or "").rsplit(".", 1)[0])
+    result["source"] = "ai"
+    result["extracted_text_preview"] = text[:500]
+    return result
+
+
+@api.post("/protocols/generate")
+async def generate_protocol(payload: FormGenerateIn,
+                            user=Depends(require_roles("admin", "practitioner"))):
+    """AI-generate a protocol from a free-text prompt (e.g., '6-week liver detox with weekly IV therapy')."""
+    if not payload.prompt or len(payload.prompt) < 5:
+        raise HTTPException(status_code=400, detail="Prompt is too short")
+    seed = (
+        f"Build a wellness/detox protocol based on this clinic-staff request:\n\n"
+        f"{payload.prompt}\n\n"
+        f"Use realistic naturopathic guidance. Choose a sensible weeks count + sessions per week."
+    )
+    result = await _llm_protocol_transcribe(seed)
+    result["source"] = "ai"
+    return result
+
+
 @api.post("/protocols/enrollments", response_model=ProtocolEnrollmentOut)
 async def create_protocol_enrollment(payload: ProtocolEnrollmentIn, request: Request,
                                      user=Depends(require_roles("admin", "practitioner"))):

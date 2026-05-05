@@ -13,7 +13,7 @@ import { useToast } from "../../hooks/use-toast";
 import { useAuth } from "../../lib/auth";
 import {
   Activity, Plus, Edit3, Trash2, Send, CheckCircle2, Loader2, Clock,
-  ChevronRight, Leaf, X, Search, ArchiveRestore, Archive,
+  ChevronRight, Leaf, X, Search, ArchiveRestore, Archive, Upload, Sparkles,
 } from "lucide-react";
 
 const STATUS_PILL = {
@@ -43,6 +43,7 @@ export default function Protocols() {
   const [editingTpl, setEditingTpl] = React.useState(null);
   const [proposing, setProposing] = React.useState(null); // template being proposed
   const [openEnr, setOpenEnr] = React.useState(null); // enrollment to view sessions
+  const [showAi, setShowAi] = React.useState(null); // 'transcribe' | 'generate' | null
 
   const loadAll = async () => {
     try {
@@ -89,6 +90,22 @@ export default function Protocols() {
         actions={
           isProvider && (
             <div className="flex gap-2 flex-wrap">
+              <Button
+                onClick={() => setShowAi("transcribe")}
+                variant="outline"
+                className="rounded-full h-10 border-[#c19a4b] text-[#8a6a3c] hover:bg-[#f1ead8]"
+                data-testid="protocol-ai-transcribe-btn"
+              >
+                <Upload size={14} className="mr-2" /> AI Transcribe PDF/DOCX
+              </Button>
+              <Button
+                onClick={() => setShowAi("generate")}
+                variant="outline"
+                className="rounded-full h-10 border-[#2f4a3a] text-[#2f4a3a] hover:bg-[#f1ead8]"
+                data-testid="protocol-ai-generate-btn"
+              >
+                <Sparkles size={14} className="mr-2" /> AI Generate
+              </Button>
               <Button
                 onClick={() => setEditingTpl({ title: "New protocol", description: "", weeks: 4, sessions_per_week: 2, daily_outline: "", foods_recommended: [], foods_avoid: [], supplements: [], lifestyle: "", treatment_label: "Treatment session", active: true })}
                 className="rounded-full h-10 bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6]"
@@ -264,6 +281,11 @@ export default function Protocols() {
       <ProtocolTemplateEditor template={editingTpl} onOpenChange={(v) => !v && setEditingTpl(null)} onSaved={() => { setEditingTpl(null); loadAll(); }} />
       <ProposeProtocolDialog template={proposing} clients={clients} onOpenChange={(v) => !v && setProposing(null)} onProposed={() => { setProposing(null); setTab("enrollments"); loadAll(); }} />
       <EnrollmentDialog enrollment={openEnr} onOpenChange={(v) => !v && setOpenEnr(null)} onChanged={loadAll} />
+      <ProtocolAiAssistDialog
+        mode={showAi}
+        onOpenChange={(v) => !v && setShowAi(null)}
+        onResult={(draft) => { setShowAi(null); setEditingTpl({ ...draft, active: true }); }}
+      />
     </PortalLayout>
   );
 }
@@ -513,6 +535,93 @@ export function EnrollmentDialog({ enrollment, onOpenChange, onChanged, viewOnly
             </div>
           )}
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+
+// ---------- AI assist (transcribe / generate) ----------
+function ProtocolAiAssistDialog({ mode, onOpenChange, onResult }) {
+  const { toast } = useToast();
+  const [file, setFile] = React.useState(null);
+  const [prompt, setPrompt] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => { if (!mode) { setFile(null); setPrompt(""); } }, [mode]);
+  if (!mode) return null;
+
+  const submit = async () => {
+    setLoading(true);
+    try {
+      let res;
+      if (mode === "transcribe") {
+        if (!file) { toast({ title: "Choose a PDF, DOCX, or TXT" }); setLoading(false); return; }
+        const fd = new FormData();
+        fd.append("file", file);
+        res = await api.post("/protocols/transcribe", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      } else {
+        if (!prompt || prompt.length < 6) { toast({ title: "Describe what to generate" }); setLoading(false); return; }
+        res = await api.post("/protocols/generate", { prompt });
+      }
+      const d = res.data;
+      toast({
+        title: "Protocol drafted",
+        description: `${d.weeks} wk × ${d.sessions_per_week}/wk · ${d.foods_recommended?.length || 0} ✓ foods, ${d.foods_avoid?.length || 0} ✗ foods`,
+      });
+      onResult && onResult(d);
+    } catch (e) {
+      toast({ title: "AI failed", description: e?.response?.data?.detail || "Try again." });
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <Dialog open={!!mode} onOpenChange={onOpenChange}>
+      <DialogContent className="bg-[#fbf7ee] border-[#e7dfc9] max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="font-display text-2xl">
+            {mode === "transcribe" ? "AI Transcribe a protocol" : "AI Generate a protocol"}
+          </DialogTitle>
+          <DialogDescription>
+            {mode === "transcribe"
+              ? "Upload a PDF, DOCX, or TXT. Claude 4.5 will detect duration, frequency, foods and lifestyle."
+              : "Describe the protocol you want and Claude 4.5 will draft it for you."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          {mode === "transcribe" ? (
+            <div>
+              <Label>File</Label>
+              <input
+                type="file"
+                accept=".pdf,.docx,.txt"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                className="mt-2 w-full text-sm file:mr-3 file:rounded-full file:border-0 file:bg-[#2f4a3a] file:text-[#f6f1e6] file:px-4 file:py-2 file:cursor-pointer"
+                data-testid="protocol-ai-file-input"
+              />
+              {file && <div className="text-xs text-[#6a6a6a] mt-2">{file.name} · {(file.size / 1024).toFixed(1)} KB</div>}
+            </div>
+          ) : (
+            <div>
+              <Label>Describe the protocol</Label>
+              <Textarea
+                className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]"
+                rows={4}
+                placeholder="e.g., 6-week liver detox with twice-weekly IV vitamin C, anti-inflammatory diet, no alcohol or caffeine."
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                data-testid="protocol-ai-prompt"
+              />
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={loading} className="bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6] rounded-full" data-testid="protocol-ai-submit">
+            {loading ? <Loader2 size={14} className="mr-1 animate-spin" /> : <Sparkles size={14} className="mr-1" />}
+            {loading ? "Drafting…" : (mode === "transcribe" ? "Transcribe" : "Generate")}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
