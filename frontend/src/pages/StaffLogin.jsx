@@ -42,10 +42,6 @@ export default function StaffLogin() {
 
   return (
     <div className="min-h-screen bg-[#0e1a14] text-[#f6f1e6] flex flex-col" data-testid="staff-login-page">
-      <div className="bg-[#7a2a2a] text-[#f6f1e6] text-[11px] tracking-widest uppercase text-center py-1.5 px-4">
-        DEMO ENVIRONMENT · NOT HIPAA COMPLIANT · DO NOT ENTER REAL PHI
-      </div>
-
       <div className="flex-1 flex items-center justify-center px-6 py-12">
         <div className="w-full max-w-md">
           <div className="flex flex-col items-center gap-3 mb-8">

@@ -1,0 +1,36 @@
+{
+  "summary": "Phase 10 Forms & Consents + HIPAA banner removal + KPI-card-clickable review. Backend: 13/13 pytest cases pass (regression smoke for login/clients/notes/all/inventory/appointments + forms CRUD, public responder flow, AI transcribe, AI generate, RBAC, built-in soft-archive). Frontend: Home copy '36 YEARS IN PRACTICE' verified, HIPAA red banner confirmed absent on /, /login, /staff-login, /portal/admin, /portal/staff, /portal/provider, /portal/provider/telehealth. All 6 Admin Overview StatCards clickable & route correctly (clients/users/visit-notes/files/appt-requests/audit-events). Forms & Consents page loads for admin/staff/practitioner, shows 3 built-in templates with 'BUILT-IN' badges, has AI Transcribe / AI Generate / Blank form buttons + search/category/archive toggle, Blank editor opens with add-field+save testids. Public /forms/respond/{token} renders without login with signature canvas + submit. Critical bug: FrontDesk.jsx references undefined setFilter() so clicking fd-kpi-* does NOT update URL with ?filter=... (fd-filter-clear never appears).",
+  "backend_issues": {"critical": [], "minor": [
+    {"endpoint": "/api/forms/send", "issue": "Response returns token but link=null; UI/consumer expecting a link may need to compose from token. Not blocking, but worth exposing absolute link URL."}
+  ]},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "FrontDesk.jsx", "issue": "setFilter is referenced on lines 107, 115, 123, 136 but NEVER defined/declared. Clicking fd-kpi-in-clinic / fd-kpi-walk-ins / fd-kpi-completed throws a ReferenceError and does nothing - URL does not update with ?filter=..., and fd-filter-clear never appears. The filterKey state is only read from URL, never written.", "selector": "[data-testid='fd-kpi-in-clinic']", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase10_forms.py",
+    "/app/test_reports/pytest/phase10.xml"
+  ],
+  "action_items": [
+    "Fix FrontDesk.jsx: define setFilter, e.g. `const setFilter = (v) => { const sp = new URLSearchParams(searchParams); if (v === 'all') sp.delete('filter'); else sp.set('filter', v); setSearchParams(sp); };` so KPI cards actually write ?filter=... to URL and render the fd-filter-clear button.",
+    "Optional: have POST /api/forms/send return a fully-qualified link (currently link=null, only token returned)."
+  ],
+  "critical_code_review_comments": [
+    "FrontDesk.jsx — undefined setFilter reference breaks Phase A requirement #4 (clickable KPI filters). Likely missed during refactor.",
+    "Built-in soft-archive endpoint works correctly; test cleanup reactivated state that was left archived by a prior testing iteration.",
+    "AI transcribe endpoint accepts plain text (despite docs stating PDF/DOCX/TXT) — worked fine with a .txt fixture and returned 5+ fields."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase10_forms.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "~92% (one functional bug in FrontDesk KPI filter)"},
+  "test_credentials": "Used tallyravello@gmail.com/TEST123 (admin), frontdesk@natmedsol.local/FrontDesk!2345 (staff), ravello@natmedsol.local/Ravello!2345 (practitioner). Login endpoint returns access_token (NOT token) — updated test helper accordingly.",
+  "seed_data_creation": "Created/deleted 1 TEST_PH10 Form template during CRUD flow; reactivated 2 built-in templates (Treatment Consent, HIPAA Notice) that were left soft-archived from prior testing runs to restore clean seeded state.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Built-in templates are soft-archived (active=False) when DELETE hits them. If a test flow toggles archive, it may leave templates inactive. Use PUT with active=true to restore. The /api/forms/templates list hides inactive by default (use include_inactive=true). Backend login returns access_token key, not token. setFilter bug in FrontDesk.jsx should be retested after main agent fix by clicking fd-kpi-in-clinic and verifying URL contains ?filter=in_clinic and fd-filter-clear appears.",
+  "rca of the issue": "FrontDesk KPI filter: Component imports useSearchParams and reads filterKey from the URL (line 29), but never defines the write-back function. Each onClick=() => setFilter(...) crashes silently (React event handler error). Fix: add const setFilter = (v) => { const next = new URLSearchParams(searchParams); v === 'all' ? next.delete('filter') : next.set('filter', v); setSearchParams(next); }; just after line 29."
+}

@@ -80,7 +80,7 @@ export default function Home() {
           <span className="opacity-40">·</span>
           <span className="flex items-center gap-2"><ShieldCheck size={14} /> Board-certified</span>
           <span className="opacity-40">·</span>
-          <span className="flex items-center gap-2"><Sparkles size={14} /> 29+ years of practice</span>
+          <span className="flex items-center gap-2"><Sparkles size={14} /> 36 years in practice</span>
         </div>
       </section>
 

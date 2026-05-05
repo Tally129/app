@@ -13,12 +13,12 @@ export default function AdminOverview() {
     <PortalLayout>
       <PortalHeader title="Admin Overview" subtitle="System-wide activity" />
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatCard label="Clients" value={stats?.clients ?? 0} icon={Users} />
-        <StatCard label="Users" value={stats?.users ?? 0} icon={ShieldCheck} />
-        <StatCard label="Visit notes" value={stats?.notes ?? 0} icon={FileText} />
-        <StatCard label="Files" value={stats?.files ?? 0} icon={FolderOpen} />
-        <StatCard label="Appt requests" value={stats?.appointments_requested ?? 0} icon={ClipboardList} />
-        <StatCard label="Audit events" value={stats?.audit_events ?? 0} icon={Activity} />
+        <StatCard label="Clients" value={stats?.clients ?? 0} icon={Users} to="/portal/provider/patients" />
+        <StatCard label="Users" value={stats?.users ?? 0} icon={ShieldCheck} to="/portal/admin/users" />
+        <StatCard label="Visit notes" value={stats?.notes ?? 0} icon={FileText} to="/portal/admin/notes" />
+        <StatCard label="Files" value={stats?.files ?? 0} icon={FolderOpen} to="/portal/admin/files" />
+        <StatCard label="Appt requests" value={stats?.appointments_requested ?? 0} icon={ClipboardList} to="/portal/provider/appointments?filter=requested" />
+        <StatCard label="Audit events" value={stats?.audit_events ?? 0} icon={Activity} to="/portal/admin/audit" />
       </div>
       <div className="mt-6 grid md:grid-cols-2 gap-4">
         <Link to="/portal/admin/users" className="card-hover rounded-2xl border border-[#e7dfc9] bg-[#fbf7ee] p-6 block">

@@ -91,10 +91,10 @@ export default function StaffDashboard() {
       />
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard label="In clinic" value={inClinic} icon={Users} />
-        <StatCard label="Walk-ins today" value={walkIns} icon={Building2} />
-        <StatCard label="Completed visits" value={completed} icon={Calendar} />
-        <StatCard label="Today's revenue" value={`$${todayTxnTotal.toFixed(0)}`} icon={Receipt} />
+        <StatCard label="In clinic" value={inClinic} icon={Users} to="/portal/staff/front-desk?filter=in_clinic" />
+        <StatCard label="Walk-ins today" value={walkIns} icon={Building2} to="/portal/staff/front-desk?filter=walk_in" />
+        <StatCard label="Completed visits" value={completed} icon={Calendar} to="/portal/staff/front-desk?filter=checked_out" />
+        <StatCard label="Today's revenue" value={`$${todayTxnTotal.toFixed(0)}`} icon={Receipt} to="/portal/staff/transactions" />
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6 mb-8">

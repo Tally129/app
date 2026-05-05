@@ -11,7 +11,7 @@ import json
 import logging
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from models import (
     UserCreate, UserOut, LoginIn, TokenOut, RefreshIn, MfaVerifyIn,
@@ -37,6 +37,8 @@ from models import (
     TimeEntryOut, TimeEditIn,
     FrontDeskCheckIn, FrontDeskUpdate, FrontDeskOut,
     ProfileUpdate, PasswordChange,
+    FormTemplateIn, FormTemplateOut, FormTranscribeOut, FormGenerateIn,
+    FormSendIn, FormSubmissionAnswers, FormSubmissionOut, FormPublicOut,
     new_id,
 )
 import httpx
@@ -388,6 +390,37 @@ async def list_notes(request: Request, client_id: str = Query(...),
                     resource_type="client", resource_id=client_id,
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
     return [_strip_id(i) for i in items]
+
+
+@api.get("/notes/all", response_model=List[NoteOut])
+async def list_all_notes(request: Request,
+                         practitioner_id: Optional[str] = None,
+                         search: Optional[str] = None,
+                         limit: int = 200,
+                         user=Depends(require_roles("admin", "practitioner", "staff"))):
+    """Clinic-wide notes index for admin/practitioner/staff drill-down screens.
+    Optional filters: practitioner_id (author), search (matches client_name)."""
+    q: Dict[str, Any] = {}
+    if practitioner_id:
+        q["practitioner_id"] = practitioner_id
+    rows = await db.visit_notes.find(q).sort("created_at", -1).to_list(limit)
+    # Hydrate with client_name
+    client_ids = list({r.get("client_id") for r in rows if r.get("client_id")})
+    clients = {c["id"]: c async for c in db.clients.find({"id": {"$in": client_ids}})}
+    out = []
+    for r in rows:
+        c = clients.get(r.get("client_id")) or {}
+        cname = c.get("full_name") or c.get("email") or ""
+        if search and search.lower() not in cname.lower():
+            continue
+        d = _strip_id(r)
+        d["client_name"] = cname
+        out.append(d)
+    await log_audit(db, user["id"], user["email"], "note.list_all",
+                    resource_type="notes",
+                    metadata={"count": len(out)},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return out
 
 
 @api.post("/notes", response_model=NoteOut)
@@ -3051,6 +3084,390 @@ async def google_session_exchange(request: Request):
     }
 
 
+# =================== PHASE 10: FORMS & CONSENTS ===================
+
+
+def _hydrate_template(t: dict) -> dict:
+    return _strip_id(t)
+
+
+def _extract_text_from_upload(filename: str, data: bytes) -> str:
+    """Extract text from PDF or DOCX bytes for AI transcription."""
+    name = (filename or "").lower()
+    if name.endswith(".pdf"):
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(io.BytesIO(data))
+            text = "\n\n".join((p.extract_text() or "") for p in reader.pages)
+            return text.strip()
+        except Exception as e:
+            logger.warning("PDF parse failed: %s", e)
+            raise HTTPException(status_code=400, detail=f"Could not parse PDF: {e}")
+    if name.endswith(".docx"):
+        try:
+            from docx import Document as _Docx
+            doc = _Docx(io.BytesIO(data))
+            paras = [p.text for p in doc.paragraphs if p.text and p.text.strip()]
+            for table in doc.tables:
+                for row in table.rows:
+                    paras.append(" | ".join(c.text.strip() for c in row.cells if c.text))
+            return "\n".join(paras).strip()
+        except Exception as e:
+            logger.warning("DOCX parse failed: %s", e)
+            raise HTTPException(status_code=400, detail=f"Could not parse DOCX: {e}")
+    if name.endswith(".txt"):
+        try:
+            return data.decode("utf-8", errors="ignore").strip()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Could not decode text file")
+    raise HTTPException(status_code=400, detail="Unsupported file type. Upload PDF, DOCX, or TXT.")
+
+
+async def _llm_form_transcribe(text: str, hint_category: Optional[str] = None) -> dict:
+    """Use Claude 4.5 to convert raw form text into our structured form schema."""
+    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="LLM key not configured")
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"emergentintegrations unavailable: {e}")
+
+    sys_msg = (
+        "You are a healthcare-forms transcription assistant. Convert the supplied "
+        "consent or intake form text into a STRICT JSON object that our app can render. "
+        "Output JSON only — no commentary, no markdown.\n\n"
+        "Schema:\n"
+        "{\n"
+        '  "title": "short title",\n'
+        '  "description": "1–2 sentence summary",\n'
+        '  "category": "consent|intake|hipaa|photo_release|treatment|other",\n'
+        '  "fields": [\n'
+        '    {"id": "kebab-case", "type": "text|textarea|date|checkbox|radio|select|signature|email|phone|number",\n'
+        '     "label": "Question label", "required": true|false, "placeholder": "...", "options": ["..."], "help_text": "..."}\n'
+        "  ]\n"
+        "}\n\n"
+        "Rules: Always include a final {type:'signature', label:'Patient signature', required:true} field. "
+        "If the form requests a printed name + date, add text + date fields above the signature. "
+        "Convert checkboxes to type 'checkbox'. Multi-choice lists become type 'radio' with options array. "
+        "Detect the category from content (HIPAA notice → 'hipaa'; photo/likeness → 'photo_release'; "
+        "treatment/procedure consent → 'treatment'; medical-history forms → 'intake'; otherwise 'consent' or 'other'). "
+        "IDs should be kebab-case derived from labels. Limit to 30 fields max."
+    )
+    if hint_category:
+        sys_msg += f"\nUser category hint: {hint_category}."
+
+    chat = LlmChat(
+        api_key=api_key,
+        session_id=f"form-transcribe-{new_id()[:8]}",
+        system_message=sys_msg,
+    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+    user = UserMessage(text=f"Form source text:\n\n{text[:18000]}")
+    response = await chat.send_message(user)
+
+    import re as _re
+    m = _re.search(r"\{.*\}", response, _re.DOTALL)
+    if not m:
+        raise HTTPException(status_code=502, detail="LLM returned no JSON")
+    data = json.loads(m.group(0))
+
+    # Sanitize fields
+    fields = []
+    for i, f in enumerate(data.get("fields") or []):
+        ftype = f.get("type") or "text"
+        if ftype not in {"text", "textarea", "date", "checkbox", "radio", "select", "signature", "email", "phone", "number"}:
+            ftype = "text"
+        fid = (f.get("id") or f.get("label") or f"field-{i+1}").lower()
+        fid = "".join(ch if (ch.isalnum() or ch == "-") else "-" for ch in fid).strip("-") or f"field-{i+1}"
+        fields.append({
+            "id": fid,
+            "type": ftype,
+            "label": (f.get("label") or "").strip()[:200] or f"Field {i+1}",
+            "required": bool(f.get("required")),
+            "placeholder": (f.get("placeholder") or "")[:120] or None,
+            "options": [str(o)[:80] for o in (f.get("options") or [])][:20],
+            "help_text": (f.get("help_text") or "")[:300] or None,
+        })
+
+    cat = data.get("category") or hint_category or "other"
+    if cat not in {"consent", "intake", "hipaa", "photo_release", "treatment", "other"}:
+        cat = "other"
+
+    return {
+        "title": (data.get("title") or "Untitled form")[:120],
+        "description": (data.get("description") or "")[:500],
+        "category": cat,
+        "fields": fields[:30],
+    }
+
+
+@api.get("/forms/templates", response_model=List[FormTemplateOut])
+async def list_form_templates(
+    include_inactive: bool = False,
+    category: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    if user["role"] == "client":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    q: Dict[str, Any] = {}
+    if not include_inactive:
+        q["active"] = True
+    if category:
+        q["category"] = category
+    rows = await db.form_templates.find(q).sort("created_at", -1).to_list(500)
+    return [_strip_id(r) for r in rows]
+
+
+@api.post("/forms/templates", response_model=FormTemplateOut)
+async def create_form_template(payload: FormTemplateIn, request: Request,
+                               user=Depends(require_roles("admin", "practitioner", "staff"))):
+    now = datetime.now(timezone.utc)
+    doc = payload.dict()
+    doc["id"] = new_id()
+    doc["builtin"] = False
+    doc["created_by"] = user["id"]
+    doc["created_by_name"] = user.get("full_name")
+    doc["created_at"] = now
+    doc["updated_at"] = now
+    await db.form_templates.insert_one(doc)
+    await log_audit(db, user["id"], user["email"], "form_template.create",
+                    resource_type="form_template", resource_id=doc["id"],
+                    metadata={"title": doc.get("title")},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return _strip_id(doc)
+
+
+@api.put("/forms/templates/{tpl_id}", response_model=FormTemplateOut)
+async def update_form_template(tpl_id: str, payload: FormTemplateIn, request: Request,
+                               user=Depends(require_roles("admin", "practitioner", "staff"))):
+    existing = await db.form_templates.find_one({"id": tpl_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if existing.get("builtin") and user["role"] != "admin":
+        # Allow admins to override built-ins; others may only clone
+        raise HTTPException(status_code=403, detail="Built-in templates can only be edited by admins")
+    updates = payload.dict()
+    updates["updated_at"] = datetime.now(timezone.utc)
+    await db.form_templates.update_one({"id": tpl_id}, {"$set": updates})
+    await log_audit(db, user["id"], user["email"], "form_template.update",
+                    resource_type="form_template", resource_id=tpl_id,
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    doc = await db.form_templates.find_one({"id": tpl_id})
+    return _strip_id(doc)
+
+
+@api.delete("/forms/templates/{tpl_id}")
+async def delete_form_template(tpl_id: str, request: Request,
+                               user=Depends(require_roles("admin"))):
+    existing = await db.form_templates.find_one({"id": tpl_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if existing.get("builtin"):
+        # Soft-archive built-ins instead of deleting
+        await db.form_templates.update_one({"id": tpl_id}, {"$set": {"active": False, "updated_at": datetime.now(timezone.utc)}})
+    else:
+        await db.form_templates.delete_one({"id": tpl_id})
+    await log_audit(db, user["id"], user["email"], "form_template.delete",
+                    resource_type="form_template", resource_id=tpl_id,
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return {"ok": True}
+
+
+@api.post("/forms/transcribe", response_model=FormTranscribeOut)
+async def transcribe_form(file: UploadFile = File(...),
+                          category: Optional[str] = Form(None),
+                          user=Depends(require_roles("admin", "practitioner", "staff"))):
+    """Upload a PDF/DOCX/TXT and AI-transcribe it into our form schema."""
+    data = await file.read()
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 8 MB)")
+    text = _extract_text_from_upload(file.filename or "", data)
+    if not text or len(text) < 30:
+        raise HTTPException(status_code=400, detail="Document appears empty after extraction")
+    result = await _llm_form_transcribe(text, hint_category=category)
+    result["source"] = "ai"
+    result["extracted_text_preview"] = text[:500]
+    return result
+
+
+@api.post("/forms/generate", response_model=FormTranscribeOut)
+async def generate_form_from_prompt(payload: FormGenerateIn,
+                                    user=Depends(require_roles("admin", "practitioner", "staff"))):
+    """AI-generate a form from a free-text prompt (e.g., 'detox program consent for 6-week protocol')."""
+    if not payload.prompt or len(payload.prompt) < 5:
+        raise HTTPException(status_code=400, detail="Prompt is too short")
+    seed = (
+        f"Create a healthcare consent/intake form based on this request from clinic staff:\n\n"
+        f"{payload.prompt}\n\n"
+        f"Audience: wellness clinic patients. Tone: clear, plain language. "
+        f"Include realistic fields appropriate to the request."
+    )
+    result = await _llm_form_transcribe(seed, hint_category=payload.category)
+    result["source"] = "ai"
+    result["extracted_text_preview"] = None
+    return result
+
+
+@api.post("/forms/send", response_model=FormSubmissionOut)
+async def send_form(payload: FormSendIn, request: Request,
+                    user=Depends(require_roles("admin", "practitioner", "staff"))):
+    tpl = await db.form_templates.find_one({"id": payload.template_id})
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    client = None
+    if payload.client_id:
+        client = await db.clients.find_one({"id": payload.client_id})
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+    token = _secrets.token_urlsafe(24)
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(hours=max(1, min(payload.expires_in_hours, 24 * 30)))
+    doc = {
+        "id": new_id(),
+        "template_id": tpl["id"],
+        "template_title": tpl.get("title"),
+        "template_category": tpl.get("category"),
+        "client_id": (client or {}).get("id"),
+        "client_name": (client or {}).get("full_name") or (client or {}).get("email"),
+        "appointment_id": payload.appointment_id,
+        "sent_by_id": user["id"],
+        "sent_by_name": user.get("full_name"),
+        "answers": {},
+        "signature_data": None,
+        "status": "sent",
+        "token": token,
+        "expires_at": expires,
+        "submitted_at": None,
+        "created_at": now,
+        "note": payload.note or None,
+    }
+    await db.form_submissions.insert_one(doc)
+    await log_audit(db, user["id"], user["email"], "form.send",
+                    resource_type="form_submission", resource_id=doc["id"],
+                    metadata={"template_id": tpl["id"], "client_id": (client or {}).get("id")},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    out = _strip_id(doc)
+    out["submit_url"] = f"/forms/respond/{token}"
+    # Best-effort push to client
+    if client and client.get("user_id"):
+        try:
+            await push_to_user(
+                client["user_id"],
+                f"New form: {tpl.get('title','')}",
+                "Tap to fill in and sign.",
+                url=f"/forms/respond/{token}",
+                tag=f"form-{doc['id']}",
+            )
+        except Exception:
+            pass
+    return out
+
+
+@api.get("/forms/submissions", response_model=List[FormSubmissionOut])
+async def list_form_submissions(
+    status: Optional[str] = None,
+    client_id: Optional[str] = None,
+    template_id: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    if user["role"] == "client":
+        self_client = await _resolve_self_client(user)
+        if not self_client:
+            return []
+        q: Dict[str, Any] = {"client_id": self_client["id"]}
+    else:
+        q = {}
+    if status:
+        q["status"] = status
+    if client_id:
+        q["client_id"] = client_id
+    if template_id:
+        q["template_id"] = template_id
+    rows = await db.form_submissions.find(q).sort("created_at", -1).to_list(500)
+    out = []
+    for r in rows:
+        d = _strip_id(r)
+        if d.get("token"):
+            d["submit_url"] = f"/forms/respond/{d['token']}"
+        out.append(d)
+    return out
+
+
+# Public — no auth — for the responder
+@api.get("/public/forms/{token}", response_model=FormPublicOut)
+async def public_form_get(token: str):
+    sub = await db.form_submissions.find_one({"token": token})
+    if not sub:
+        raise HTTPException(status_code=404, detail="Form link invalid or expired")
+    if sub.get("status") == "void":
+        raise HTTPException(status_code=410, detail="This form link has been voided")
+    expires = sub.get("expires_at")
+    if expires and isinstance(expires, datetime):
+        cmp_exp = expires.replace(tzinfo=timezone.utc) if expires.tzinfo is None else expires
+        if cmp_exp < datetime.now(timezone.utc):
+            await db.form_submissions.update_one({"id": sub["id"]}, {"$set": {"status": "expired"}})
+            raise HTTPException(status_code=410, detail="This form link has expired")
+    tpl = await db.form_templates.find_one({"id": sub["template_id"]})
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Form template no longer exists")
+    return {
+        "template_id": tpl["id"],
+        "title": tpl.get("title", ""),
+        "description": tpl.get("description", ""),
+        "category": tpl.get("category", "other"),
+        "fields": tpl.get("fields", []),
+        "client_name": sub.get("client_name"),
+        "expires_at": sub.get("expires_at"),
+        "already_submitted": sub.get("status") == "submitted",
+    }
+
+
+@api.post("/public/forms/{token}/submit", response_model=FormSubmissionOut)
+async def public_form_submit(token: str, payload: FormSubmissionAnswers, request: Request):
+    sub = await db.form_submissions.find_one({"token": token})
+    if not sub:
+        raise HTTPException(status_code=404, detail="Form link invalid")
+    if sub.get("status") == "submitted":
+        raise HTTPException(status_code=409, detail="Already submitted")
+    if sub.get("status") in {"void", "expired"}:
+        raise HTTPException(status_code=410, detail="This form is no longer accepting responses")
+    expires = sub.get("expires_at")
+    if expires and isinstance(expires, datetime):
+        cmp = expires.replace(tzinfo=timezone.utc) if expires.tzinfo is None else expires
+        if cmp < datetime.now(timezone.utc):
+            await db.form_submissions.update_one({"id": sub["id"]}, {"$set": {"status": "expired"}})
+            raise HTTPException(status_code=410, detail="This form link has expired")
+
+    now = datetime.now(timezone.utc)
+    update = {
+        "answers": payload.answers or {},
+        "signature_data": payload.signature_data,
+        "status": "submitted",
+        "submitted_at": now,
+    }
+    await db.form_submissions.update_one({"id": sub["id"]}, {"$set": update})
+    await log_audit(db, None, None, "form.submit_public",
+                    resource_type="form_submission", resource_id=sub["id"],
+                    metadata={"template_id": sub.get("template_id"), "client_id": sub.get("client_id")},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    sub.update(update)
+    out = _strip_id(sub)
+    if out.get("token"):
+        out["submit_url"] = f"/forms/respond/{out['token']}"
+    return out
+
+
+@api.get("/forms/submissions/{sub_id}", response_model=FormSubmissionOut)
+async def get_form_submission(sub_id: str, user=Depends(require_roles("admin", "practitioner", "staff"))):
+    sub = await db.form_submissions.find_one({"id": sub_id})
+    if not sub:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    out = _strip_id(sub)
+    if out.get("token"):
+        out["submit_url"] = f"/forms/respond/{out['token']}"
+    return out
+
+
 # =================== STARTUP ===================
 @app.on_event("startup")
 async def seed_demo():
@@ -3063,6 +3480,9 @@ async def seed_demo():
         await db.audit_logs.create_index("ts")
         await db.ws_tickets.create_index("expires_at", expireAfterSeconds=0)
         await db.push_subscriptions.create_index([("user_id", 1), ("endpoint", 1)], unique=True)
+        await db.form_templates.create_index([("builtin", 1), ("title", 1)])
+        await db.form_submissions.create_index("token", unique=True)
+        await db.form_submissions.create_index("client_id")
     except Exception as e:
         logger.warning("Index creation warning: %s", e)
 
@@ -3098,6 +3518,61 @@ async def seed_demo():
             "is_active": True, "created_at": datetime.now(timezone.utc), "last_login_at": None,
         })
         logger.info("Seeded demo staff (front desk) user.")
+
+    # Idempotent: ensure 3 built-in form templates exist (Phase 10)
+    builtins = [
+        {
+            "title": "Treatment Consent",
+            "description": "General consent to receive wellness treatment services at Natural Medical Solutions.",
+            "category": "treatment",
+            "fields": [
+                {"id": "patient-name", "type": "text", "label": "Patient name", "required": True, "options": [], "placeholder": None, "help_text": None},
+                {"id": "dob", "type": "date", "label": "Date of birth", "required": True, "options": [], "placeholder": None, "help_text": None},
+                {"id": "concern", "type": "textarea", "label": "Primary concern or reason for visit", "required": False, "options": [], "placeholder": None, "help_text": None},
+                {"id": "allergies", "type": "textarea", "label": "Known allergies / sensitivities", "required": False, "options": [], "placeholder": None, "help_text": None},
+                {"id": "informed-consent", "type": "checkbox", "label": "I understand the treatments offered are wellness-focused and not intended to diagnose, treat, or cure disease.", "required": True, "options": [], "placeholder": None, "help_text": None},
+                {"id": "consent-date", "type": "date", "label": "Date", "required": True, "options": [], "placeholder": None, "help_text": None},
+                {"id": "signature", "type": "signature", "label": "Patient signature", "required": True, "options": [], "placeholder": None, "help_text": None},
+            ],
+        },
+        {
+            "title": "HIPAA Notice of Privacy Practices",
+            "description": "Acknowledgement of our HIPAA privacy practices for your protected health information.",
+            "category": "hipaa",
+            "fields": [
+                {"id": "acknowledge", "type": "checkbox", "label": "I acknowledge that I have received the Notice of Privacy Practices.", "required": True, "options": [], "placeholder": None, "help_text": None},
+                {"id": "signature", "type": "signature", "label": "Patient signature", "required": True, "options": [], "placeholder": None, "help_text": None},
+            ],
+        },
+        {
+            "title": "Photo & Likeness Release",
+            "description": "Consent for before/after photography and permitted use of patient likeness.",
+            "category": "photo_release",
+            "fields": [
+                {"id": "patient-name", "type": "text", "label": "Patient name", "required": True, "options": [], "placeholder": None, "help_text": None},
+                {"id": "use-options", "type": "radio", "label": "Permitted use",
+                 "required": True,
+                 "options": ["Internal records only", "Internal + provider review", "Internal + marketing (with face redacted)", "Full marketing release (face visible)"],
+                 "placeholder": None, "help_text": None},
+                {"id": "consent-date", "type": "date", "label": "Date", "required": True, "options": [], "placeholder": None, "help_text": None},
+                {"id": "signature", "type": "signature", "label": "Patient signature", "required": True, "options": [], "placeholder": None, "help_text": None},
+            ],
+        },
+    ]
+    now = datetime.now(timezone.utc)
+    for b in builtins:
+        if not await db.form_templates.find_one({"title": b["title"], "builtin": True}):
+            await db.form_templates.insert_one({
+                "id": new_id(),
+                "builtin": True,
+                "active": True,
+                "created_by": None,
+                "created_by_name": "Built-in",
+                "created_at": now,
+                "updated_at": now,
+                **b,
+            })
+            logger.info("Seeded built-in form template: %s", b["title"])
 
 
 @app.on_event("shutdown")

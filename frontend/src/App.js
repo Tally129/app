@@ -26,6 +26,10 @@ import AdminOverview from "./pages/admin/AdminOverview";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminAudit from "./pages/admin/AdminAudit";
 import AdminReminders from "./pages/admin/AdminReminders";
+import AdminNotesList from "./pages/admin/AdminNotesList";
+import AdminFilesList from "./pages/admin/AdminFilesList";
+import AdminFormsConsents from "./pages/admin/AdminFormsConsents";
+import FormResponder from "./pages/FormResponder";
 import TelehealthVisit from "./pages/TelehealthVisit";
 import MyAccount from "./pages/portal/MyAccount";
 import FrontDesk from "./pages/portal/FrontDesk";
@@ -128,7 +132,15 @@ function App() {
             <Route path="/portal/admin/inventory" element={<Protected roles={["admin"]}><Inventory /></Protected>} />
             <Route path="/portal/admin/import-clients" element={<Protected roles={["admin"]}><ImportClients /></Protected>} />
             <Route path="/portal/admin/analytics" element={<Protected roles={["admin"]}><Analytics /></Protected>} />
+            <Route path="/portal/admin/notes" element={<Protected roles={["admin", "practitioner"]}><AdminNotesList /></Protected>} />
+            <Route path="/portal/admin/files" element={<Protected roles={["admin", "practitioner", "staff"]}><AdminFilesList /></Protected>} />
+            <Route path="/portal/admin/forms" element={<Protected roles={["admin", "practitioner", "staff"]}><AdminFormsConsents /></Protected>} />
+            <Route path="/portal/staff/forms" element={<Protected roles={["admin", "practitioner", "staff"]}><AdminFormsConsents /></Protected>} />
+            <Route path="/portal/provider/forms" element={<Protected roles={["admin", "practitioner", "staff"]}><AdminFormsConsents /></Protected>} />
             <Route path="/portal/provider/analytics" element={<Protected roles={["practitioner", "admin"]}><Analytics /></Protected>} />
+
+            {/* Public form responder (token-based, no login required) */}
+            <Route path="/forms/respond/:token" element={<FormResponder />} />
           </Routes>
           <Toaster />
         </AuthProvider>

@@ -91,6 +91,7 @@ const NAV = {
       items: [
         { to: "/portal/provider/availability", label: "Availability", icon: Clock },
         { to: "/portal/provider/treatments", label: "Treatments", icon: Stethoscope },
+        { to: "/portal/provider/forms", label: "Forms & Consents", icon: ClipboardList },
         { to: "/portal/provider/analytics", label: "Analytics", icon: BarChart3 },
       ],
     },
@@ -126,6 +127,7 @@ const NAV = {
         { to: "/portal/staff/transactions", label: "Transactions", icon: Wallet },
         { to: "/portal/staff/inventory", label: "Inventory", icon: Boxes },
         { to: "/portal/staff/treatments", label: "Treatments", icon: Stethoscope },
+        { to: "/portal/staff/forms", label: "Forms & Consents", icon: ClipboardList },
       ],
     },
     {
@@ -162,6 +164,7 @@ const NAV = {
         { to: "/portal/admin/transactions", label: "Transactions", icon: Wallet },
         { to: "/portal/admin/inventory", label: "Inventory", icon: Boxes },
         { to: "/portal/admin/treatments", label: "Treatments", icon: Stethoscope },
+        { to: "/portal/admin/forms", label: "Forms & Consents", icon: ClipboardList },
         { to: "/portal/admin/analytics", label: "Analytics", icon: BarChart3 },
       ],
     },
@@ -211,14 +214,6 @@ export default function PortalLayout({ children }) {
   return (
     <div className="min-h-screen bg-parchment font-body text-[#2a2a2a]" data-testid="portal-layout">
       <div className="top-ribbon" />
-
-      {/* HIPAA DEMO BANNER */}
-      <div
-        className="bg-[#7a2a2a] text-[#f6f1e6] text-[11px] tracking-widest uppercase text-center py-1.5 px-4"
-        data-testid="hipaa-demo-banner"
-      >
-        DEMO ENVIRONMENT · NOT HIPAA COMPLIANT · DO NOT ENTER REAL PHI
-      </div>
 
       <div className="flex">
         {/* Sidebar */}
@@ -363,9 +358,9 @@ export function PortalHeader({ title, subtitle, actions }) {
   );
 }
 
-export function StatCard({ label, value, icon: Icon, accent }) {
-  return (
-    <div className="card-hover rounded-2xl border border-[#e7dfc9] bg-[#fbf7ee] p-5">
+export function StatCard({ label, value, icon: Icon, accent, to }) {
+  const card = (
+    <div className="card-hover rounded-2xl border border-[#e7dfc9] bg-[#fbf7ee] p-5 h-full">
       <div className="flex items-center justify-between">
         <span className="text-[11px] uppercase tracking-widest text-[#8a6a3c]">{label}</span>
         {Icon && <Icon size={16} className="text-[#2f4a3a]" />}
@@ -373,5 +368,17 @@ export function StatCard({ label, value, icon: Icon, accent }) {
       <div className={`font-display text-[36px] mt-2 ${accent || "text-[#1f2a22]"}`}>{value}</div>
     </div>
   );
+  if (to) {
+    return (
+      <Link
+        to={to}
+        className="block transition hover:-translate-y-0.5"
+        data-testid={`statcard-link-${(label || "").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+      >
+        {card}
+      </Link>
+    );
+  }
+  return card;
 }
 

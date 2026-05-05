@@ -349,9 +349,6 @@ export default function TelehealthVisit() {
 
   return (
     <div className="min-h-screen bg-[#0e1a14] text-[#f6f1e6] flex flex-col" data-testid="telehealth-page">
-      <div className="bg-[#7a2a2a] text-[#f6f1e6] text-[11px] tracking-widest uppercase text-center py-1.5 px-4">
-        DEMO ENVIRONMENT · NOT HIPAA COMPLIANT · DO NOT ENTER REAL PHI
-      </div>
       <div className="border-b border-[#2f4a3a] px-6 py-4 flex items-center justify-between bg-[#1a2a22]">
         <Link to="/portal" className="flex items-center gap-2 text-sm text-[#c19a4b] hover:text-[#f6f1e6]">
           <ArrowLeft size={16} /> Back to portal

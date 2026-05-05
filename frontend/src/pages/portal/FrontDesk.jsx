@@ -1,4 +1,5 @@
 import React from "react";
+import { useSearchParams } from "react-router-dom";
 import PortalLayout, { PortalHeader, StatCard } from "../PortalLayout";
 import api from "../../lib/api";
 import { Button } from "../../components/ui/button";
@@ -7,7 +8,7 @@ import { Label } from "../../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { useToast } from "../../hooks/use-toast";
-import { UserPlus, LogIn, LogOut, Building2, Users, Clock } from "lucide-react";
+import { UserPlus, LogIn, LogOut, Building2, Users, Clock, X } from "lucide-react";
 
 const STATUSES = [
   { v: "checked_in", label: "Checked in" },
@@ -24,6 +25,8 @@ export default function FrontDesk() {
   const [showCheckin, setShowCheckin] = React.useState(false);
   const [form, setForm] = React.useState({ client_id: "", room: "", walk_in: false });
   const [search, setSearch] = React.useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filterKey = searchParams.get("filter") || "all"; // all | in_clinic | walk_in | checked_out
 
   const load = async () => {
     setLoading(true);
@@ -99,10 +102,42 @@ export default function FrontDesk() {
       />
 
       <div className="grid sm:grid-cols-3 gap-4 mb-6">
-        <StatCard label="In clinic" value={counts.in} icon={Users} />
-        <StatCard label="Walk-ins" value={counts.walk} icon={Building2} />
-        <StatCard label="Completed" value={counts.out} icon={Clock} />
+        <button
+          type="button"
+          onClick={() => setFilter("in_clinic")}
+          className={`text-left rounded-2xl transition ${filterKey === "in_clinic" ? "ring-2 ring-[#2f4a3a]" : "hover:-translate-y-0.5"}`}
+          data-testid="fd-kpi-in-clinic"
+        >
+          <StatCard label="In clinic" value={counts.in} icon={Users} accent={filterKey === "in_clinic" ? "text-[#2f4a3a]" : undefined} />
+        </button>
+        <button
+          type="button"
+          onClick={() => setFilter("walk_in")}
+          className={`text-left rounded-2xl transition ${filterKey === "walk_in" ? "ring-2 ring-[#c19a4b]" : "hover:-translate-y-0.5"}`}
+          data-testid="fd-kpi-walk-ins"
+        >
+          <StatCard label="Walk-ins" value={counts.walk} icon={Building2} accent={filterKey === "walk_in" ? "text-[#8a6a3c]" : undefined} />
+        </button>
+        <button
+          type="button"
+          onClick={() => setFilter("checked_out")}
+          className={`text-left rounded-2xl transition ${filterKey === "checked_out" ? "ring-2 ring-[#5b6f5b]" : "hover:-translate-y-0.5"}`}
+          data-testid="fd-kpi-completed"
+        >
+          <StatCard label="Completed" value={counts.out} icon={Clock} accent={filterKey === "checked_out" ? "text-[#5b6f5b]" : undefined} />
+        </button>
       </div>
+      {filterKey !== "all" && (
+        <div className="mb-4 flex items-center gap-2 text-xs text-[#8a6a3c]">
+          <span>Filtered by</span>
+          <span className="px-2 py-0.5 rounded-full bg-[#f1ead8] border border-[#e0d6bc] uppercase tracking-wider text-[10px]">
+            {filterKey.replace("_", " ")}
+          </span>
+          <button onClick={() => setFilter("all")} className="inline-flex items-center gap-1 hover:underline" data-testid="fd-filter-clear">
+            <X size={11} /> Clear
+          </button>
+        </div>
+      )}
 
       <Input
         placeholder="Search by client name…"

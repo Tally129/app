@@ -618,3 +618,96 @@ class PasswordChange(BaseModel):
 class TelehealthConsentIn(BaseModel):
     signature: str
 
+
+# =========== PHASE 10: FORMS & CONSENTS ===========
+
+FormCategory = Literal["consent", "intake", "hipaa", "photo_release", "treatment", "other"]
+FormFieldType = Literal["text", "textarea", "date", "checkbox", "radio", "select", "signature", "email", "phone", "number"]
+
+
+class FormField(BaseModel):
+    id: str
+    type: FormFieldType
+    label: str
+    required: bool = False
+    placeholder: Optional[str] = None
+    options: List[str] = []  # for radio/select
+    help_text: Optional[str] = None
+
+
+class FormTemplateIn(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    category: FormCategory = "other"
+    fields: List[FormField] = []
+    active: bool = True
+
+
+class FormTemplateOut(FormTemplateIn):
+    id: str
+    builtin: bool = False
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class FormTranscribeOut(BaseModel):
+    title: str
+    description: str = ""
+    category: FormCategory = "other"
+    fields: List[FormField] = []
+    source: str = "ai"  # ai | upload | manual
+    extracted_text_preview: Optional[str] = None
+
+
+class FormGenerateIn(BaseModel):
+    prompt: str
+    category: Optional[FormCategory] = "other"
+
+
+class FormSendIn(BaseModel):
+    template_id: str
+    client_id: Optional[str] = None  # if known
+    appointment_id: Optional[str] = None
+    expires_in_hours: int = 168  # 7 days default
+    note: Optional[str] = None
+
+
+class FormSubmissionAnswers(BaseModel):
+    answers: Dict[str, Any] = {}
+    signature_data: Optional[str] = None  # data:image/png;base64,...
+
+
+class FormSubmissionOut(BaseModel):
+    id: str
+    template_id: str
+    template_title: Optional[str] = None
+    template_category: Optional[FormCategory] = None
+    client_id: Optional[str] = None
+    client_name: Optional[str] = None
+    appointment_id: Optional[str] = None
+    sent_by_id: Optional[str] = None
+    sent_by_name: Optional[str] = None
+    answers: Dict[str, Any] = {}
+    signature_data: Optional[str] = None
+    status: Literal["sent", "submitted", "expired", "void"] = "sent"
+    token: Optional[str] = None
+    submit_url: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    submitted_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class FormPublicOut(BaseModel):
+    """What an unauthenticated responder sees."""
+    template_id: str
+    title: str
+    description: str
+    category: FormCategory
+    fields: List[FormField]
+    client_name: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    already_submitted: bool = False
+
+
