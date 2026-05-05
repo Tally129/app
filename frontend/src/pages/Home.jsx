@@ -240,6 +240,11 @@ export default function Home() {
                 Patient Sign In
               </Button>
             </Link>
+            <Link to="/staff-login">
+              <Button variant="outline" className="btn-lift h-11 px-6 rounded-full border-[#2f4a3a] text-[#2f4a3a]" data-testid="home-staff-signin">
+                Staff sign-in
+              </Button>
+            </Link>
           </div>
         </div>
 

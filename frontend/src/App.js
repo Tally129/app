@@ -37,6 +37,9 @@ import Transactions from "./pages/portal/Transactions";
 import ImportClients from "./pages/portal/ImportClients";
 import Analytics from "./pages/portal/Analytics";
 import AppointmentsEHR from "./pages/provider/AppointmentsEHR";
+import TelehealthHub from "./pages/portal/TelehealthHub";
+import StaffLogin from "./pages/StaffLogin";
+import StaffDashboard from "./pages/staff/StaffDashboard";
 import { Toaster } from "./components/ui/toaster";
 import { AuthProvider } from "./lib/auth";
 import { Protected } from "./lib/Protected";
@@ -52,6 +55,7 @@ function App() {
             <Route path="/request-appointment" element={<RequestAppointment />} />
             <Route path="/signup" element={<Signup />} />
             <Route path="/login" element={<Login />} />
+            <Route path="/staff-login" element={<StaffLogin />} />
 
             {/* Portal redirect */}
             <Route path="/portal" element={<PortalIndex />} />
@@ -60,6 +64,23 @@ function App() {
             <Route path="/portal/visit/:id" element={
               <Protected roles={["client", "practitioner", "staff", "admin"]}><TelehealthVisit /></Protected>
             } />
+            <Route path="/portal/patient/telehealth" element={<Protected roles={["client"]}><TelehealthHub /></Protected>} />
+            <Route path="/portal/provider/telehealth" element={<Protected roles={["practitioner", "admin"]}><TelehealthHub /></Protected>} />
+            <Route path="/portal/staff/telehealth" element={<Protected roles={["staff", "admin"]}><TelehealthHub /></Protected>} />
+            <Route path="/portal/admin/telehealth" element={<Protected roles={["admin"]}><TelehealthHub /></Protected>} />
+
+            {/* Staff portal (front-desk-first) */}
+            <Route path="/portal/staff" element={<Protected roles={["staff", "admin"]}><StaffDashboard /></Protected>} />
+            <Route path="/portal/staff/front-desk" element={<Protected roles={["staff", "admin"]}><FrontDesk /></Protected>} />
+            <Route path="/portal/staff/appointments" element={<Protected roles={["staff", "admin"]}><AppointmentsEHR /></Protected>} />
+            <Route path="/portal/staff/patients" element={<Protected roles={["staff", "admin"]}><PatientsList /></Protected>} />
+            <Route path="/portal/staff/pos" element={<Protected roles={["staff", "admin"]}><PointOfSale /></Protected>} />
+            <Route path="/portal/staff/transactions" element={<Protected roles={["staff", "admin"]}><Transactions /></Protected>} />
+            <Route path="/portal/staff/inventory" element={<Protected roles={["staff", "admin"]}><Inventory /></Protected>} />
+            <Route path="/portal/staff/treatments" element={<Protected roles={["staff", "admin"]}><Treatments /></Protected>} />
+            <Route path="/portal/staff/time-clock" element={<Protected roles={["staff", "admin"]}><TimeClock /></Protected>} />
+            <Route path="/portal/staff/account" element={<Protected roles={["staff", "admin"]}><MyAccount /></Protected>} />
+            <Route path="/portal/staff/security" element={<Protected roles={["staff", "admin"]}><Security /></Protected>} />
 
             {/* Patient */}
             <Route path="/portal/patient" element={<Protected roles={["client"]}><PatientDashboard /></Protected>} />

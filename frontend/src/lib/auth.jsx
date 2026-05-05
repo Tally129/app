@@ -119,6 +119,6 @@ export function useAuth() {
 export function roleHome(role) {
   if (role === "admin") return "/portal/admin";
   if (role === "practitioner") return "/portal/provider";
-  if (role === "staff") return "/portal/provider";
+  if (role === "staff") return "/portal/staff";
   return "/portal/patient";
 }

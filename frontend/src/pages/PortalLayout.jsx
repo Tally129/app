@@ -52,6 +52,7 @@ const NAV = {
       items: [
         { to: "/portal/patient/intake", label: "Intake", icon: ClipboardList },
         { to: "/portal/patient/chart", label: "My Chart", icon: FileText },
+        { to: "/portal/patient/telehealth", label: "Telehealth", icon: Video },
         { to: "/portal/patient/plan", label: "Treatment Plan", icon: Sparkles },
         { to: "/portal/patient/symptoms", label: "Symptom Tracker", icon: LineChart },
         { to: "/portal/patient/labs", label: "Lab Results", icon: TestTube2 },
@@ -106,32 +107,32 @@ const NAV = {
     {
       group: "Today",
       items: [
-        { to: "/portal/provider", label: "Dashboard", icon: LayoutDashboard },
-        { to: "/portal/provider/front-desk", label: "Front Desk", icon: Briefcase },
-        { to: "/portal/provider/appointments", label: "Appointments", icon: CalendarDays },
-        { to: "/portal/provider/time-clock", label: "Time Clock", icon: Timer },
+        { to: "/portal/staff", label: "Front desk", icon: Briefcase },
+        { to: "/portal/staff/appointments", label: "Appointments", icon: CalendarDays },
+        { to: "/portal/staff/telehealth", label: "Telehealth", icon: Video },
+        { to: "/portal/staff/time-clock", label: "Time Clock", icon: Timer },
       ],
     },
     {
       group: "Clients",
       items: [
-        { to: "/portal/provider/patients", label: "Clients", icon: Users },
+        { to: "/portal/staff/patients", label: "Clients", icon: Users },
       ],
     },
     {
       group: "Operations",
       items: [
-        { to: "/portal/provider/pos", label: "Point of Sale", icon: ShoppingCart },
-        { to: "/portal/provider/transactions", label: "Transactions", icon: Wallet },
-        { to: "/portal/provider/inventory", label: "Inventory", icon: Boxes },
-        { to: "/portal/provider/treatments", label: "Treatments", icon: Stethoscope },
+        { to: "/portal/staff/pos", label: "Point of Sale", icon: ShoppingCart },
+        { to: "/portal/staff/transactions", label: "Transactions", icon: Wallet },
+        { to: "/portal/staff/inventory", label: "Inventory", icon: Boxes },
+        { to: "/portal/staff/treatments", label: "Treatments", icon: Stethoscope },
       ],
     },
     {
       group: "Settings",
       items: [
-        { to: "/portal/provider/account", label: "My Account", icon: UserCircle },
-        { to: "/portal/provider/security", label: "Security", icon: ShieldCheck },
+        { to: "/portal/staff/account", label: "My Account", icon: UserCircle },
+        { to: "/portal/staff/security", label: "Security", icon: ShieldCheck },
       ],
     },
   ],
@@ -143,6 +144,7 @@ const NAV = {
         { to: "/portal/admin", label: "Overview", icon: LayoutDashboard },
         { to: "/portal/admin/front-desk", label: "Front Desk", icon: Briefcase },
         { to: "/portal/provider/appointments", label: "Appointments", icon: CalendarDays },
+        { to: "/portal/admin/telehealth", label: "Telehealth", icon: Video },
         { to: "/portal/admin/time-clock", label: "Time Clock", icon: Timer },
       ],
     },
@@ -372,3 +374,4 @@ export function StatCard({ label, value, icon: Icon, accent }) {
     </div>
   );
 }
+
