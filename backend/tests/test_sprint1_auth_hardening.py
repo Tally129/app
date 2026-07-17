@@ -35,7 +35,8 @@ def _nonce(n=6) -> str:
 
 
 def _register_client() -> tuple[str, str, str, str]:
-    """Register a fresh client, return (email, password, access_token, refresh_token)."""
+    """Register a fresh client, return (email, password, access_token, ''-unused).
+    Sprint 2: refresh is in HttpOnly cookie only, so the 4th tuple slot is legacy."""
     email = f"s1-client-{_nonce()}@ex.com"
     r = requests.post(f"{API}/auth/register", json={
         "email": email, "password": CLIENT_PW,
@@ -43,7 +44,7 @@ def _register_client() -> tuple[str, str, str, str]:
     })
     r.raise_for_status()
     d = r.json()
-    return email, CLIENT_PW, d["access_token"], d["refresh_token"]
+    return email, CLIENT_PW, d["access_token"], d.get("refresh_token", "")
 
 
 def _login(email: str, pw: str, mfa_token: str | None = None) -> dict:
@@ -83,11 +84,18 @@ class TestSessionBinding:
         assert me.status_code == 200
 
     def test_refresh_reuses_same_session_but_new_jti(self):
-        _, _, access, refresh = _register_client()
-        r = requests.post(f"{API}/auth/refresh", json={"refresh_token": refresh})
-        assert r.status_code == 200
-        new_access = r.json()["access_token"]
-        assert new_access != access  # each token has its own jti
+        # Sprint 2: refresh via HttpOnly cookie. Use requests.Session to carry cookies.
+        s = requests.Session()
+        email = f"s1c-{_nonce()}@ex.com"
+        s.post(f"{API}/auth/register", json={"email": email, "password": CLIENT_PW,
+                                              "full_name": "Q Q", "phone": "+15551110000"})
+        # Login again through session so the cookie jar carries nms_rt
+        d = s.post(f"{API}/auth/login", json={"email": email, "password": CLIENT_PW}).json()
+        access1 = d["access_token"]
+        r = s.post(f"{API}/auth/refresh")
+        assert r.status_code == 200, r.text
+        access2 = r.json()["access_token"]
+        assert access2 and access2 != access1  # new jti
 
 
 # --------------------------------------------------------------------------- #

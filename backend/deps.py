@@ -105,10 +105,9 @@ async def get_authenticated_user(
     request: Request,
     creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer),
 ):
-    """Verify the bearer JWT, look up the user, and enforce session revocation.
-
-    Does NOT enforce MFA. Use `require_workforce_mfa` on PHI endpoints.
-    Does NOT enforce role. Use `require_roles(...)` for role gating.
+    """Verify the bearer JWT + session revocation + session_version + idle/absolute
+    timeouts. Only touches `last_used_at` AFTER all checks pass, and throttles
+    that write to once per minute (per Sprint 2 gate corrections).
     """
     if creds is None:
         raise HTTPException(status_code=401, detail="Missing auth token")
@@ -117,21 +116,25 @@ async def get_authenticated_user(
 
     sid = payload.get("sid")
     if not sid:
-        # Legacy tokens (pre-Sprint-1) had no sid — force re-login.
         raise HTTPException(status_code=401, detail="Session binding required; please sign in again.")
 
     session = await db.user_sessions.find_one({"id": sid})
     if not session:
         raise HTTPException(status_code=401, detail="Session not found")
-    if session.get("revoked_at") is not None:
-        raise HTTPException(status_code=401, detail="Session revoked")
-    exp = session.get("expires_at")
-    if exp is not None:
-        # Mongo strips tz info — treat as UTC for the comparison.
-        if exp.tzinfo is None:
-            exp = exp.replace(tzinfo=timezone.utc)
-        if exp < datetime.now(timezone.utc):
-            raise HTTPException(status_code=401, detail="Session expired")
+
+    # Order of checks per Sprint 2 gate: revoked → absolute → idle → status → session_version → THEN touch.
+    from sessions import check_and_touch_session
+    reason = await check_and_touch_session(session, get_client_ip(request))
+    if reason:
+        # Do not silently overwrite — bump the session row's reason field too.
+        try:
+            await db.user_sessions.update_one(
+                {"id": sid, "revoked_at": None},
+                {"$set": {"revoked_at": datetime.now(timezone.utc), "revoke_reason": reason}},
+            )
+        except Exception:
+            pass
+        raise HTTPException(status_code=401, detail=reason)
 
     user = await db.users.find_one({"id": payload["sub"]})
     if not user:
@@ -139,19 +142,11 @@ async def get_authenticated_user(
     if not user.get("is_active", True):
         raise HTTPException(status_code=403, detail="Account disabled")
 
-    # Touch session (best-effort — must not fail the request)
-    try:
-        await db.user_sessions.update_one(
-            {"id": sid},
-            {"$set": {
-                "last_used_at": datetime.now(timezone.utc),
-                "ip_last": get_client_ip(request),
-            }},
-        )
-    except Exception:
-        pass
+    # Session-version staleness: any access token issued before the current version is invalid.
+    token_sv = payload.get("sv")
+    if token_sv is not None and int(user.get("session_version") or 1) > int(token_sv):
+        raise HTTPException(status_code=401, detail="session_version_stale")
 
-    # Attach session snapshot for downstream deps
     user["_session"] = session
     return user
 

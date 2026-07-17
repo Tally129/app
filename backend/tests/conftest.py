@@ -46,19 +46,33 @@ def _enroll_workforce_mfa_and_patch_login():
         {"email": {"$in": list(SEEDED_WORKFORCE)}},
         {"$set": {"mfa_enabled": True, "mfa_secret": encrypt_mfa_secret(FIXTURE_TOTP_SECRET)}},
     )
+    # 1b) Sprint 2: clear any active sessions on seeded workforce accounts so the
+    #     5-session cap doesn't reject the very first test login.
+    user_ids = [u["id"] for u in dbh.users.find(
+        {"email": {"$in": list(SEEDED_WORKFORCE)}}, {"id": 1})]
+    from datetime import datetime, timezone
+    dbh.user_sessions.update_many(
+        {"user_id": {"$in": user_ids}, "revoked_at": None},
+        {"$set": {"revoked_at": datetime.now(timezone.utc), "revoke_reason": "test_setup_cleanup"}},
+    )
+    dbh.refresh_tokens.update_many(
+        {"user_id": {"$in": user_ids}, "revoked_at": None},
+        {"$set": {"revoked_at": datetime.now(timezone.utc), "revoke_reason": "test_setup_cleanup"}},
+    )
     c.close()
 
-    # 2) Monkey-patch requests.post so login for seeded workforce auto-appends TOTP.
+    # 2) Monkey-patch requests.post AND requests.Session.post so login for
+    # seeded workforce auto-appends TOTP (Sprint 2: cookie-based refresh needs Session).
     _orig_post = requests.post
+    _orig_session_post = requests.Session.post
 
-    def _patched_post(url, *args, **kwargs):
+    def _auto_totp(orig_call, url, *args, **kwargs):
         try:
-            if url.endswith("/auth/login") or url.endswith("/api/auth/login"):
+            if isinstance(url, str) and url.endswith("/auth/login"):
                 body = kwargs.get("json") or {}
                 email = (body.get("email") or "").lower()
                 if email in SEEDED_WORKFORCE and not body.get("mfa_token"):
-                    # First submit — if server returns mfa_required, resubmit with TOTP.
-                    resp = _orig_post(url, *args, **kwargs)
+                    resp = orig_call(url, *args, **kwargs)
                     try:
                         j = resp.json()
                     except Exception:
@@ -66,15 +80,24 @@ def _enroll_workforce_mfa_and_patch_login():
                     if j.get("mfa_required"):
                         totp = pyotp.TOTP(FIXTURE_TOTP_SECRET).now()
                         kwargs["json"] = {**body, "mfa_token": totp}
-                        return _orig_post(url, *args, **kwargs)
+                        return orig_call(url, *args, **kwargs)
                     return resp
         except Exception:
             pass
-        return _orig_post(url, *args, **kwargs)
+        return orig_call(url, *args, **kwargs)
+
+    def _patched_post(url, *args, **kwargs):
+        return _auto_totp(_orig_post, url, *args, **kwargs)
+
+    def _patched_session_post(self, url, *args, **kwargs):
+        return _auto_totp(lambda u, *a, **kw: _orig_session_post(self, u, *a, **kw),
+                          url, *args, **kwargs)
 
     requests.post = _patched_post
+    requests.Session.post = _patched_session_post
     yield
     requests.post = _orig_post
+    requests.Session.post = _orig_session_post
 
 
 @pytest.fixture(autouse=True)

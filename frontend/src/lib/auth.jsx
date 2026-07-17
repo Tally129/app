@@ -1,88 +1,93 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import api, { LS, touchActivity, isIdle, IDLE_TIMEOUT_MS } from "./api";
+import api, {
+  LS, touchActivity, isIdle, IDLE_TIMEOUT_MS,
+  setAccessToken, getAccessToken, clearAccessToken, doRefresh,
+  onAuthBroadcast, broadcastAuth,
+} from "./api";
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem(LS.user) || "null");
-    } catch {
-      return null;
-    }
-  });
+  const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const logout = useCallback(async () => {
-    try {
-      await api.post("/auth/logout");
-    } catch {}
-    localStorage.removeItem(LS.access);
-    localStorage.removeItem(LS.refresh);
+    try { await api.post("/auth/logout"); } catch {}
+    clearAccessToken();
     localStorage.removeItem(LS.user);
     localStorage.removeItem(LS.lastActivity);
     setUser(null);
+    broadcastAuth("logout");
+  }, []);
+
+  const logoutAll = useCallback(async () => {
+    try { await api.post("/auth/logout-all"); } catch {}
+    clearAccessToken();
+    localStorage.removeItem(LS.user);
+    setUser(null);
+    broadcastAuth("logout-all");
   }, []);
 
   const refreshMe = useCallback(async () => {
-    if (!localStorage.getItem(LS.access)) {
-      setLoading(false);
-      return;
-    }
+    if (!getAccessToken()) { setLoading(false); return; }
     try {
       const { data } = await api.get("/auth/me");
       setUser(data);
       localStorage.setItem(LS.user, JSON.stringify(data));
     } catch {
       setUser(null);
+      clearAccessToken();
+      localStorage.removeItem(LS.user);
     } finally {
       setLoading(false);
     }
   }, []);
 
+  // Sprint 2 bootstrap: on app-start, try the refresh cookie for a new access token.
   useEffect(() => {
-    refreshMe();
+    let mounted = true;
+    (async () => {
+      try {
+        await doRefresh();
+        const cached = localStorage.getItem(LS.user);
+        if (mounted && cached) setUser(JSON.parse(cached));
+        await refreshMe();
+      } catch {
+        if (mounted) { clearAccessToken(); setUser(null); setLoading(false); }
+      }
+    })();
+    const off = onAuthBroadcast((msg) => {
+      if (msg?.event === "logout" || msg?.event === "logout-all") {
+        clearAccessToken();
+        localStorage.removeItem(LS.user);
+        setUser(null);
+      }
+    });
+    return () => { mounted = false; off(); };
   }, [refreshMe]);
 
-  // Idle session timeout
-  useEffect(() => {
-    if (!user) return;
+  async function loginWithPassword(email, password, mfa_token) {
+    const { data } = await api.post("/auth/login", { email, password, mfa_token: mfa_token || null });
+    if (data.mfa_required) return { mfa_required: true };
+    setAccessToken(data.access_token);
+    localStorage.setItem(LS.user, JSON.stringify(data.user));
     touchActivity();
-    const onActivity = () => touchActivity();
-    const events = ["click", "mousemove", "keydown", "scroll"];
-    events.forEach((e) => window.addEventListener(e, onActivity));
-    const t = setInterval(() => {
-      if (isIdle()) {
-        logout();
-      }
-    }, 30_000);
-    return () => {
-      events.forEach((e) => window.removeEventListener(e, onActivity));
-      clearInterval(t);
-    };
-  }, [user, logout]);
+    setUser(data.user);
+    return { user: data.user, notice: data.notice };
+  }
 
-  async function loginWithPassword(email, password, mfaToken) {
-    const { data } = await api.post("/auth/login", {
-      email,
-      password,
-      mfa_token: mfaToken,
-    });
-    if (data.mfa_required) {
-      return { mfa_required: true };
-    }
-    localStorage.setItem(LS.access, data.access_token);
-    localStorage.setItem(LS.refresh, data.refresh_token);
+  async function loginContinue(continuation_ticket, revoke_session_id) {
+    const { data } = await api.post("/auth/login/continue", { continuation_ticket, revoke_session_id });
+    setAccessToken(data.access_token);
     localStorage.setItem(LS.user, JSON.stringify(data.user));
     touchActivity();
     setUser(data.user);
     return { user: data.user };
   }
 
-  async function registerNew(payload) {
-    const { data } = await api.post("/auth/register", payload);
-    localStorage.setItem(LS.access, data.access_token);
-    localStorage.setItem(LS.refresh, data.refresh_token);
+  async function registerNew({ email, password, full_name, phone }) {
+    const { data } = await api.post("/auth/register", { email, password, full_name, phone });
+    setAccessToken(data.access_token);
     localStorage.setItem(LS.user, JSON.stringify(data.user));
     touchActivity();
     setUser(data.user);
@@ -90,40 +95,28 @@ export function AuthProvider({ children }) {
   }
 
   async function loginWithGoogleSession(sessionId) {
-    const { data } = await api.post("/auth/google/session", null, {
-      headers: { "X-Session-ID": sessionId },
-    });
-    localStorage.setItem(LS.access, data.access_token);
-    localStorage.setItem(LS.refresh, data.refresh_token);
+    const { data } = await api.post("/auth/google/session", null, { headers: { "X-Session-ID": sessionId } });
+    setAccessToken(data.access_token);
     localStorage.setItem(LS.user, JSON.stringify(data.user));
     touchActivity();
     setUser(data.user);
     return { user: data.user };
   }
 
-  // Direct Google OAuth (BAA-friendly). Redirects the browser to Google.
   async function beginGoogleOAuthDirect() {
     const { data } = await api.get("/auth/google/oauth/authorize");
     window.location.href = data.authorize_url;
   }
 
-  // Called from /oauth-complete route after Google → backend → frontend redirect.
-  async function completeOAuthFromTokens(accessToken, refreshToken) {
-    localStorage.setItem(LS.access, accessToken);
-    localStorage.setItem(LS.refresh, refreshToken);
-    const { data } = await api.get("/auth/me", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    localStorage.setItem(LS.user, JSON.stringify(data));
-    touchActivity();
-    setUser(data);
-    return { user: data };
+  async function completeOAuthFromTokens(_access, _refresh) {
+    // Legacy signature — access token is now delivered via the /oauth/exchange path.
+    return {};
   }
 
   return (
     <AuthContext.Provider
       value={{
-        user, loading, logout, loginWithPassword, registerNew, refreshMe, setUser,
+        user, loading, logout, logoutAll, loginWithPassword, loginContinue, registerNew, refreshMe, setUser,
         loginWithGoogleSession, beginGoogleOAuthDirect, completeOAuthFromTokens,
       }}
     >
@@ -132,16 +125,16 @@ export function AuthProvider({ children }) {
   );
 }
 
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth outside provider");
-  return ctx;
-}
+export function useAuth() { return useContext(AuthContext); }
 
 export function roleHome(role) {
-  if (role === "admin") return "/portal/admin";
-  if (role === "practitioner") return "/portal/provider";
-  if (role === "staff") return "/portal/staff";
-  if (role === "auditor") return "/portal/admin/audit";
-  return "/portal/patient";
+  switch (role) {
+    case "admin":       return "/portal/admin";
+    case "practitioner": return "/portal/practitioner";
+    case "staff":
+    case "front_desk":
+    case "frontdesk":   return "/portal/frontdesk";
+    case "auditor":     return "/portal/admin/audit";
+    default:            return "/portal";
+  }
 }

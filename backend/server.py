@@ -631,10 +631,34 @@ async def shutdown_db_client():
 
 
 app.include_router(api)
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+# --- Sprint 2 CORS ------------------------------------------------------ #
+_allowed_origins_env = os.environ.get("ALLOWED_ORIGINS", "").strip()
+_allowed_origins = [o.strip() for o in _allowed_origins_env.split(",") if o.strip()]
+_hipaa_mode = os.environ.get("HIPAA_MODE", "false").lower() in {"1", "true", "yes", "on"}
+if _hipaa_mode and (not _allowed_origins or "*" in _allowed_origins):
+    raise RuntimeError(
+        "HIPAA_MODE=on: ALLOWED_ORIGINS must be an explicit comma-separated list — "
+        "wildcard + credentials is refused by browsers and disallowed here."
+    )
+if _allowed_origins:
+    # Credentialed CORS with explicit allowlist (production-safe)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_credentials=True,
+        allow_origins=_allowed_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    # Dev/preview only: wildcard origins WITHOUT credentials. Refresh cookie
+    # will only fire when the request explicitly sends withCredentials=true
+    # AND the browser accepts our Set-Cookie for this preview origin.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_credentials=False,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+

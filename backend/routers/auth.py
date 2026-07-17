@@ -12,12 +12,13 @@ Sprint 1 changes:
 import hashlib
 import os
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 
 from audit import get_client_ip, log_audit
@@ -32,6 +33,12 @@ from deps import (
 from models import (
     LoginIn, MfaVerifyIn, PasswordChange, ProfileUpdate, RefreshIn, TokenOut,
     UserCreate, UserOut, new_id,
+)
+from sessions import (
+    check_and_touch_session, clear_refresh_cookie_kwargs,
+    enforce_active_session_limit, hash_refresh_token, issue_first_refresh,
+    list_active_sessions_sanitized, refresh_cookie_kwargs,
+    revoke_all_user_sessions, revoke_family, rotate_refresh, session_policy_for,
 )
 
 # --------------------------------------------------------------------------- #
@@ -53,18 +60,29 @@ def _hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-async def _create_session(user_doc: dict, request: Request, *, mfa_satisfied: bool) -> str:
-    """Insert a new user_sessions row and return its id."""
+async def _create_session(user_doc: dict, request: Request, *, mfa_satisfied: bool) -> tuple[str, str, str]:
+    """Insert a new user_sessions row + first opaque refresh token.
+    Returns (sid, family_id, raw_refresh_token). The RAW token is meant only
+    for the immediate Set-Cookie header — it is never persisted plaintext.
+    """
     now = datetime.now(timezone.utc)
     sid = new_id()
+    family_id = new_id()
     ip = get_client_ip(request)
     ua = request.headers.get("user-agent") if request else None
+    role = user_doc.get("role") or "client"
+    idle_min, absolute_lifetime = session_policy_for(role)
+    absolute_expires_at = now + absolute_lifetime
     await db.user_sessions.insert_one({
         "id": sid,
         "user_id": user_doc["id"],
         "created_at": now,
         "last_used_at": now,
-        "expires_at": now + SESSION_TTL,
+        # legacy field kept for backwards-compat readers
+        "expires_at": absolute_expires_at,
+        # Sprint 2: explicit policy fields (frozen at session creation)
+        "idle_timeout_minutes": idle_min,
+        "absolute_expires_at": absolute_expires_at,
         "revoked_at": None,
         "revoke_reason": None,
         "session_version": int(user_doc.get("session_version") or 1),
@@ -72,21 +90,35 @@ async def _create_session(user_doc: dict, request: Request, *, mfa_satisfied: bo
         "ip_last": ip,
         "user_agent": ua,
         "mfa_satisfied_at": now if mfa_satisfied else None,
+        "family_id": family_id,
     })
-    return sid
+    raw = await issue_first_refresh(
+        user_id=user_doc["id"], session_id=sid, family_id=family_id,
+        expires_at=absolute_expires_at, ip=ip, user_agent=ua,
+    )
+    return sid, family_id, raw
+
+
+def _set_refresh_cookie(resp: Response, raw: str) -> None:
+    resp.set_cookie(value=raw, **refresh_cookie_kwargs())
+
+
+def _clear_refresh_cookie(resp: Response) -> None:
+    resp.set_cookie(value="", **clear_refresh_cookie_kwargs())
 
 
 async def _revoke_all_sessions(user_id: str, reason: str) -> int:
-    r = await db.user_sessions.update_many(
-        {"user_id": user_id, "revoked_at": None},
-        {"$set": {"revoked_at": datetime.now(timezone.utc), "revoke_reason": reason}},
-    )
-    return r.modified_count
+    r = await revoke_all_user_sessions(user_id, reason)
+    return r["sessions_revoked"]
 
 
 async def _revoke_session(sid: str, reason: str) -> None:
     await db.user_sessions.update_one(
         {"id": sid, "revoked_at": None},
+        {"$set": {"revoked_at": datetime.now(timezone.utc), "revoke_reason": reason}},
+    )
+    await db.refresh_tokens.update_many(
+        {"session_id": sid, "revoked_at": None},
         {"$set": {"revoked_at": datetime.now(timezone.utc), "revoke_reason": reason}},
     )
 
@@ -135,13 +167,25 @@ async def register(payload: UserCreate, request: Request):
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
 
     # Clients don't need MFA; workforce sessions start unsatisfied.
-    sid = await _create_session(user_doc, request, mfa_satisfied=(role not in WORKFORCE_ROLES))
-    access = make_access_token(user_doc["id"], role, sid)
-    refresh = make_refresh_token(user_doc["id"], sid)
-    return {"access_token": access, "refresh_token": refresh, "user": to_user_out(user_doc), "mfa_required": False}
+    sid, family_id, raw_refresh = await _create_session(user_doc, request, mfa_satisfied=(role not in WORKFORCE_ROLES))
+    access = make_access_token(user_doc["id"], role, sid, session_version=user_doc.get("session_version", 1))
+    resp = Response()
+    _set_refresh_cookie(resp, raw_refresh)
+    resp.body = json_dumps_body({"access_token": access, "refresh_token": "", "user": to_user_out(user_doc), "mfa_required": False})
+    resp.media_type = "application/json"
+    resp.headers["content-length"] = str(len(resp.body))
+    return resp
 
 
-@api.post("/auth/login", response_model=TokenOut)
+def json_dumps_body(obj) -> bytes:
+    import json
+    def _default(o):
+        if isinstance(o, datetime): return o.isoformat()
+        raise TypeError
+    return json.dumps(obj, default=_default).encode("utf-8")
+
+
+@api.post("/auth/login")
 async def login(payload: LoginIn, request: Request):
     user = await db.users.find_one({"email": payload.email.lower()})
     if not user or not verify_password(payload.password, user.get("password_hash", "")):
@@ -161,11 +205,34 @@ async def login(payload: LoginIn, request: Request):
     mfa_satisfied_now = False
     if user.get("mfa_enabled"):
         if not payload.mfa_token:
-            # Return signal only — do NOT mint tokens yet.
             return {"access_token": "", "refresh_token": "", "user": to_user_out(user), "mfa_required": True}
         if not verify_mfa(user.get("mfa_secret", ""), payload.mfa_token):
             raise HTTPException(status_code=401, detail="Invalid MFA code")
         mfa_satisfied_now = True
+
+    # Active-session limit check BEFORE creating a new session.
+    limit_check = await enforce_active_session_limit(user)
+    if limit_check["action"] == "reject_workforce":
+        # Return a continuation ticket. The user must choose a session to revoke,
+        # then call /auth/login/continue with the ticket to actually authenticate.
+        ticket_id = new_id()
+        await db.login_continuations.insert_one({
+            "ticket_id": ticket_id,
+            "user_id": user["id"],
+            "created_at": datetime.now(timezone.utc),
+            "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+            "mfa_satisfied_now": mfa_satisfied_now,
+            "consumed_at": None,
+        })
+        sanitized = await list_active_sessions_sanitized(user["id"])
+        raise HTTPException(status_code=409, detail={
+            "code": "active_session_limit_exceeded",
+            "message": "You have too many active sessions. Sign out of one to continue.",
+            "continuation_ticket": ticket_id,
+            "expires_in_seconds": 300,
+            "active_sessions": sanitized,
+            "limit": limit_check["limit"],
+        })
 
     await db.users.update_one({"id": user["id"]}, {"$set": {"last_login_at": datetime.now(timezone.utc)}})
     await db.login_history.insert_one({
@@ -178,47 +245,157 @@ async def login(payload: LoginIn, request: Request):
                     resource_type="user", resource_id=user["id"],
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
 
-    # Client sessions start mfa-satisfied (they have no MFA requirement).
-    # Workforce sessions are mfa-satisfied ONLY after TOTP verification.
     starts_satisfied = mfa_satisfied_now or (role not in WORKFORCE_ROLES)
-    sid = await _create_session(user, request, mfa_satisfied=starts_satisfied)
-    access = make_access_token(user["id"], role, sid)
-    refresh = make_refresh_token(user["id"], sid)
-    return {"access_token": access, "refresh_token": refresh, "user": to_user_out(user), "mfa_required": False}
+    sid, family_id, raw_refresh = await _create_session(user, request, mfa_satisfied=starts_satisfied)
+    access = make_access_token(user["id"], role, sid, session_version=user.get("session_version", 1))
+
+    body = {"access_token": access, "user": to_user_out(user), "mfa_required": False}
+    if limit_check.get("action") == "evicted_oldest":
+        body["notice"] = "Another device was signed out to make room for this session."
+    resp = Response(content=json_dumps_body(body), media_type="application/json")
+    _set_refresh_cookie(resp, raw_refresh)
+    return resp
 
 
-@api.post("/auth/refresh", response_model=TokenOut)
-async def refresh_token(payload: RefreshIn, request: Request):
-    """Sprint 1: refresh rotates the ACCESS jti only (each token has its own jti).
-    Refresh-family rotation and reuse detection ships in Sprint 2.
+@api.post("/auth/login/continue")
+async def login_continue(payload: dict, request: Request):
+    """After hitting the workforce active-session cap, the client revokes a
+    session (via DELETE /auth/sessions/{id} — but wait, that needs auth; so
+    we do it here). Body: {continuation_ticket, revoke_session_id}.
     """
-    data = decode_token(payload.refresh_token, expected_type="refresh")
-    sid = data.get("sid")
-    if not sid:
-        raise HTTPException(status_code=401, detail="Refresh token missing session binding")
-    session = await db.user_sessions.find_one({"id": sid})
-    if not session or session.get("revoked_at") is not None:
-        raise HTTPException(status_code=401, detail="Session invalid")
-    exp = session["expires_at"]
-    if exp.tzinfo is None:
-        exp = exp.replace(tzinfo=timezone.utc)
-    if exp < datetime.now(timezone.utc):
-        raise HTTPException(status_code=401, detail="Session expired")
-    user = await db.users.find_one({"id": data["sub"]})
+    ticket_id = str(payload.get("continuation_ticket") or "")
+    revoke_sid = str(payload.get("revoke_session_id") or "")
+    if not ticket_id or not revoke_sid:
+        raise HTTPException(status_code=400, detail="Missing ticket or session id")
+    row = await db.login_continuations.find_one_and_update(
+        {"ticket_id": ticket_id, "consumed_at": None,
+         "expires_at": {"$gt": datetime.now(timezone.utc)}},
+        {"$set": {"consumed_at": datetime.now(timezone.utc)}},
+    )
+    if not row:
+        raise HTTPException(status_code=400, detail="Invalid or expired continuation ticket")
+    # Revoke the chosen session (must belong to this user).
+    target = await db.user_sessions.find_one({"id": revoke_sid, "user_id": row["user_id"]})
+    if not target:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await _revoke_session(revoke_sid, "user_chose_revoke")
+
+    user = await db.users.find_one({"id": row["user_id"]})
     if not user or not user.get("is_active", True):
-        raise HTTPException(status_code=401, detail="User not found or disabled")
-    access = make_access_token(user["id"], user["role"], sid)
-    refresh = make_refresh_token(user["id"], sid)
-    return {"access_token": access, "refresh_token": refresh, "user": to_user_out(user), "mfa_required": False}
+        raise HTTPException(status_code=403, detail="Account disabled")
+    role = user.get("role", "client")
+
+    sid, family_id, raw_refresh = await _create_session(user, request, mfa_satisfied=row.get("mfa_satisfied_now", False))
+    access = make_access_token(user["id"], role, sid, session_version=user.get("session_version", 1))
+    resp = Response(
+        content=json_dumps_body({"access_token": access, "user": to_user_out(user), "mfa_required": False}),
+        media_type="application/json",
+    )
+    _set_refresh_cookie(resp, raw_refresh)
+    return resp
+
+
+@api.post("/auth/refresh")
+async def refresh_endpoint(request: Request):
+    """Sprint 2: opaque refresh token, atomic rotation with concurrency grace,
+    family reuse detection. Reads the token from the `nms_rt` HttpOnly cookie ONLY.
+    """
+    # Origin allowlist check (CSRF defense).
+    allowed = [o.strip() for o in (os.environ.get("ALLOWED_ORIGINS") or "").split(",") if o.strip()]
+    origin = request.headers.get("origin") or request.headers.get("referer") or ""
+    if allowed and origin:
+        if not any(origin.startswith(a) for a in allowed):
+            raise HTTPException(status_code=403, detail="Origin not allowed")
+
+    raw = request.cookies.get("nms_rt") or ""
+    if not raw:
+        raise HTTPException(status_code=401, detail="Missing refresh cookie")
+
+    ip = get_client_ip(request)
+    ua = request.headers.get("user-agent")
+    outcome = await rotate_refresh(raw, ip=ip, user_agent=ua)
+
+    if outcome.kind == "unknown":
+        resp = Response(content=b'{"detail":"Invalid refresh"}', status_code=401,
+                        media_type="application/json")
+        _clear_refresh_cookie(resp)
+        return resp
+
+    if outcome.kind == "reuse_detected":
+        # Family + session already burned by rotate_refresh().
+        await log_audit(db, outcome.user_id, None, "auth.refresh_reuse_detected",
+                        metadata={"family_id": outcome.family_id, "severity": "high"},
+                        ip=ip, user_agent=ua)
+        resp = Response(content=b'{"detail":"Invalid refresh"}', status_code=401,
+                        media_type="application/json")
+        _clear_refresh_cookie(resp)
+        return resp
+
+    if outcome.kind == "concurrency_grace":
+        # Legitimate concurrent refresh — do NOT burn family, do NOT clear cookie.
+        await log_audit(db, outcome.user_id, None, "auth.refresh_concurrency_detected",
+                        metadata={"family_id": outcome.family_id, "severity": "info"},
+                        ip=ip, user_agent=ua)
+        # 409 Conflict signals the client to just retry with the cookie the
+        # winning request already installed.
+        return Response(content=b'{"detail":"concurrency_retry"}', status_code=409,
+                        media_type="application/json")
+
+    # outcome.kind == "rotated"
+    user = await db.users.find_one({"id": outcome.user_id})
+    if not user or not user.get("is_active", True):
+        resp = Response(content=b'{"detail":"User disabled"}', status_code=401,
+                        media_type="application/json")
+        _clear_refresh_cookie(resp)
+        return resp
+    access = make_access_token(user["id"], user["role"], outcome.session_id,
+                                session_version=user.get("session_version", 1))
+    await log_audit(db, user["id"], None, "auth.refresh_rotated",
+                    metadata={"family_id": outcome.family_id}, ip=ip, user_agent=ua)
+    body = {"access_token": access, "user": to_user_out(user)}
+    resp = Response(content=json_dumps_body(body), media_type="application/json")
+    _set_refresh_cookie(resp, outcome.raw)
+    return resp
 
 
 @api.post("/auth/logout")
-async def logout(request: Request, user=Depends(get_authenticated_user)):
+async def logout(request: Request, response: Response, user=Depends(get_authenticated_user)):
     sid = (user.get("_session") or {}).get("id")
     if sid:
         await _revoke_session(sid, "user_logout")
     await log_audit(db, user["id"], user["email"], "auth.logout",
                     resource_type="session", resource_id=sid,
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    _clear_refresh_cookie(response)
+    return {"ok": True}
+
+
+@api.post("/auth/logout-all")
+async def logout_all(request: Request, response: Response, user=Depends(get_authenticated_user)):
+    """Revoke every session + refresh family for the authenticated user."""
+    r = await revoke_all_user_sessions(user["id"], reason="user_logout_all")
+    await log_audit(db, user["id"], user["email"], "auth.sessions_revoked_all",
+                    metadata=r, ip=get_client_ip(request),
+                    user_agent=request.headers.get("user-agent"))
+    _clear_refresh_cookie(response)
+    return {"ok": True, **r}
+
+
+@api.get("/auth/sessions")
+async def list_my_sessions(user=Depends(get_authenticated_user)):
+    """Return the user's active sessions (sanitized — no raw IPs / full UA)."""
+    current_sid = (user.get("_session") or {}).get("id")
+    return await list_active_sessions_sanitized(user["id"], current_sid=current_sid)
+
+
+@api.delete("/auth/sessions/{session_id}")
+async def revoke_my_session(session_id: str, request: Request, user=Depends(get_authenticated_user)):
+    target = await db.user_sessions.find_one({"id": session_id, "user_id": user["id"]})
+    if not target:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await _revoke_session(session_id, "user_revoked")
+    await log_audit(db, user["id"], user["email"], "auth.session_revoked",
+                    resource_type="session", resource_id=session_id,
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
     return {"ok": True}
 
@@ -559,22 +736,17 @@ async def google_session_exchange(request: Request):
         )
 
     # Google users are always role=client here → session starts mfa-satisfied.
-    sid = await _create_session(user, request, mfa_satisfied=(user["role"] not in WORKFORCE_ROLES))
-    access = make_access_token(user["id"], user["role"], sid)
-    refresh = make_refresh_token(user["id"], sid)
+    sid, family_id, raw_refresh = await _create_session(user, request, mfa_satisfied=(user["role"] not in WORKFORCE_ROLES))
+    access = make_access_token(user["id"], user["role"], sid, session_version=user.get("session_version", 1))
     await log_audit(db, user["id"], user["email"], "auth.login_google",
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
-    return {
+    resp = Response(content=json_dumps_body({
         "access_token": access,
-        "refresh_token": refresh,
-        "user": {
-            "id": user["id"],
-            "email": user["email"],
-            "full_name": user.get("full_name"),
-            "role": user["role"],
-            "picture_url": user.get("picture_url"),
-        },
-    }
+        "user": {"id": user["id"], "email": user["email"], "full_name": user.get("full_name"),
+                 "role": user["role"], "picture_url": user.get("picture_url")},
+    }), media_type="application/json")
+    _set_refresh_cookie(resp, raw_refresh)
+    return resp
 
 
 # --------------------------------------------------------------------------- #
@@ -709,9 +881,18 @@ async def google_oauth_callback(request: Request, code: Optional[str] = None,
             }},
         )
 
-    sid = await _create_session(user, request, mfa_satisfied=(user["role"] not in WORKFORCE_ROLES))
-    access = make_access_token(user["id"], user["role"], sid)
-    refresh = make_refresh_token(user["id"], sid)
+    sid, family_id, raw_refresh = await _create_session(user, request, mfa_satisfied=(user["role"] not in WORKFORCE_ROLES))
+    access = make_access_token(user["id"], user["role"], sid, session_version=user.get("session_version", 1))
+    # Store refresh + access under a one-time handoff id so nothing lands in the URL.
+    handoff_id = secrets.token_urlsafe(24)
+    await db.oauth_handoffs.insert_one({
+        "handoff_id": handoff_id,
+        "user_id": user["id"],
+        "access_token": access,
+        "refresh_cookie_value": raw_refresh,
+        "created_at": datetime.now(timezone.utc),
+        "consumed": False,
+    })
     await log_audit(db, user["id"], user["email"], "auth.login_google_direct",
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
 

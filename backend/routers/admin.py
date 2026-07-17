@@ -63,7 +63,7 @@ async def admin_audit(limit: int = 100, user_id: Optional[str] = None, action: O
 
 @api.get("/admin/users", response_model=List[UserOut])
 async def admin_users(user=Depends(require_roles("admin"))):
-    items = await db.users.find().sort("created_at", -1).to_list(500)
+    items = await db.users.find().sort("created_at", -1).to_list(5000)
     return [to_user_out(_strip_id(i)) for i in items]
 
 

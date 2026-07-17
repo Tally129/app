@@ -146,14 +146,16 @@ def _base_claims() -> dict:
     }
 
 
-def make_access_token(user_id: str, role: str, sid: str) -> str:
-    """`sid` is REQUIRED — Sprint 1 binds every access token to a server-side session."""
+def make_access_token(user_id: str, role: str, sid: str, session_version: int = 1) -> str:
+    """`sid` is REQUIRED — Sprint 1 binds every access token to a server-side session.
+    Sprint 2 adds `sv` (session_version) so revocation via version-bump is detectable."""
     payload = {
         **_base_claims(),
         "sub": user_id,
         "role": role,
         "type": "access",
         "sid": sid,
+        "sv": int(session_version),
         "jti": uuid.uuid4().hex,
         "iat": int(_now().timestamp()),
         "exp": int((_now() + timedelta(minutes=ACCESS_TTL_MIN)).timestamp()),

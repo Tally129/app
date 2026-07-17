@@ -107,13 +107,21 @@ class TestAuthRoutes:
         assert r.json()["role"] == "auditor"
 
     def test_refresh_flow(self, admin_token):
-        # login again to get a refresh token
-        r = requests.post(f"{API}/auth/login", json={"email": ADMIN[0], "password": ADMIN[1]}, timeout=15)
+        # Sprint 2: refresh cookie flow — use requests.Session for cookie jar.
+        # Use a fresh CLIENT user (no MFA) to avoid conftest monkey-patch confusion.
+        import random, string
+        email = "s2rf-" + "".join(random.choices(string.ascii_lowercase, k=6)) + "@ex.com"
+        s = requests.Session()
+        s.post(f"{API}/auth/register", json={
+            "email": email, "password": "SafePass2026Long!",
+            "full_name": "Q Q", "phone": "+15551110000",
+        }, timeout=15)
+        r = s.post(f"{API}/auth/login", json={"email": email, "password": "SafePass2026Long!"}, timeout=15)
         assert r.status_code == 200
-        j = r.json()
-        assert "refresh_token" in j, f"no refresh_token in login body: {list(j.keys())}"
-        r2 = requests.post(f"{API}/auth/refresh", json={"refresh_token": j["refresh_token"]}, timeout=15)
-        assert r2.status_code == 200
+        assert "access_token" in r.json()
+        assert "nms_rt" in s.cookies.get_dict(), f"nms_rt cookie not set: {s.cookies.get_dict()}"
+        r2 = s.post(f"{API}/auth/refresh", timeout=15)
+        assert r2.status_code == 200, f"refresh failed: {r2.status_code} {r2.text}"
         assert "access_token" in r2.json()
 
 
