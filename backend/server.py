@@ -77,6 +77,10 @@ from routers import forms_protocols as _forms_protocols_routes  # noqa: F401
 from routers import compliance as _compliance_routes  # noqa: F401
 from routers import breakglass as _breakglass_routes  # noqa: F401
 
+# Startup config safety validation (fail-fast in HIPAA_MODE)
+from security_config import enforce_production_config
+enforce_production_config()
+
 
 app = FastAPI(title="NatMedSol EMR API")
 

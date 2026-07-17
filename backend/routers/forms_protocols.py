@@ -424,15 +424,44 @@ async def public_form_submit(token: str, payload: FormSubmissionAnswers, request
         "answers": payload.answers or {},
         "signature_data": payload.signature_data,
         "status": "submitted",
+        # Signed submissions are immediately clinically-finalized (the
+        # signature makes the record immutable). Amendments must go through
+        # /forms/submissions/{id}/amend.
+        "lifecycle_status": "finalized",
+        "finalized_at": now,
         "submitted_at": now,
+        "amendments": [],
+        "prior_versions": [{
+            "version": 1, "author_id": sub.get("client_id") or "public",
+            "answers": payload.answers or {}, "signature_data": payload.signature_data,
+            "finalized_at": now,
+        }],
     }
     await db.form_submissions.update_one({"id": sub["id"]}, {"$set": update})
     await log_audit(db, None, None, "form.submit_public",
                     resource_type="form_submission", resource_id=sub["id"],
+                    severity="high", outcome="success",
                     metadata={"template_id": sub.get("template_id"), "client_id": sub.get("client_id")},
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
     sub.update(update)
     out = _strip_id(sub)
+    if out.get("token"):
+        out["submit_url"] = f"/forms/respond/{out['token']}"
+    return out
+
+
+@api.post("/forms/submissions/{sub_id}/amend", response_model=FormSubmissionOut)
+async def amend_form_submission(sub_id: str, payload: dict, request: Request,
+                                 user=Depends(require_roles("admin", "practitioner"))):
+    from clinical_lock import amend_document
+    doc = await amend_document(
+        db, "form_submissions", sub_id, user,
+        content=str(payload.get("content") or ""),
+        reason=str(payload.get("reason") or ""),
+        audit_action="form.amend", request=request,
+        status_field="lifecycle_status",
+    )
+    out = _strip_id(doc)
     if out.get("token"):
         out["submit_url"] = f"/forms/respond/{out['token']}"
     return out

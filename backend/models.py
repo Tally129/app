@@ -193,6 +193,8 @@ class FileMetaOut(BaseModel):
     created_at: datetime
     sha256: Optional[str] = None
     scan_status: Optional[str] = None
+    scan_engine: Optional[str] = None
+    scanned_at: Optional[datetime] = None
     deleted_at: Optional[datetime] = None
 
 
@@ -375,6 +377,11 @@ class PlanOut(PlanIn):
     practitioner_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    lifecycle_status: Optional[str] = "draft"
+    finalized_at: Optional[datetime] = None
+    finalized_by: Optional[str] = None
+    amendments: List[Dict[str, Any]] = []
+    prior_versions: List[Dict[str, Any]] = []
 
 
 # --------- Reminder settings ---------
@@ -706,6 +713,11 @@ class FormSubmissionOut(BaseModel):
     answers: Dict[str, Any] = {}
     signature_data: Optional[str] = None
     status: Literal["sent", "submitted", "expired", "void"] = "sent"
+    lifecycle_status: Optional[str] = None
+    finalized_at: Optional[datetime] = None
+    finalized_by: Optional[str] = None
+    amendments: List[Dict[str, Any]] = []
+    prior_versions: List[Dict[str, Any]] = []
     token: Optional[str] = None
     submit_url: Optional[str] = None
     expires_at: Optional[datetime] = None

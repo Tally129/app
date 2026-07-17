@@ -527,16 +527,34 @@ async def upload_file(
         "uploaded_by_name": user.get("full_name", ""),
         "created_at": datetime.now(timezone.utc),
         "deleted_at": None,
-        # Malware-scan integration point — provider plugs in and updates this.
+        # Quarantine until scanner clears.
         "scan_status": "pending",
         "scan_provider": None,
         "scan_result": None,
+        "scan_engine": None,
+        "scanned_at": None,
     }
     await db.files.insert_one(meta)
+    # Synchronous inline scan — small files (≤20 MiB) complete in well under a
+    # second on clamd, and this keeps the contract simple: by the time the
+    # client sees a 200 the row is either `clean` or quarantined. Downloads
+    # gate on `scan_status == 'clean'`.
+    from malware_scan import scan_and_update_file
+    scan_result = await scan_and_update_file(
+        db, meta["id"], content, log_audit_fn=log_audit,
+        user_id=user["id"], user_email=user["email"],
+    )
+    meta["scan_status"] = scan_result["status"]
+    meta["scan_result"] = scan_result.get("signature")
+    meta["scan_engine"] = scan_result.get("engine")
+    meta["scanned_at"] = scan_result.get("ts")
     await log_audit(db, user["id"], user["email"], "file.upload",
                     resource_type="file", resource_id=meta["id"],
                     metadata={"client_id": client_id, "category": category,
-                              "size": len(content), "sha256": checksum, "mime": mime},
+                              "size": len(content), "sha256": checksum, "mime": mime,
+                              "scan_status": meta["scan_status"]},
+                    severity="high" if meta["scan_status"] == "infected" else "info",
+                    outcome="deny" if meta["scan_status"] == "infected" else "success",
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
     return _strip_id(meta)
 
@@ -566,6 +584,30 @@ async def download_file(file_id: str, request: Request, user=Depends(get_current
         self_client = await _resolve_self_client(user)
         if not self_client or meta.get("client_id") != self_client["id"]:
             raise HTTPException(status_code=403, detail="Forbidden")
+    # Downloads and clinical attachments gate on scanner-verified `clean` status.
+    scan_status = (meta.get("scan_status") or "pending").lower()
+    if scan_status == "pending":
+        raise HTTPException(status_code=425, detail={
+            "code": "scan_pending", "message": "File is awaiting malware scan.",
+        })
+    if scan_status == "infected":
+        # High-severity access-denied audit; DO NOT reveal signature name to
+        # the caller (avoid signature-oracle disclosure).
+        await log_audit(db, user["id"], user["email"], "file.download_denied",
+                        resource_type="file", resource_id=file_id,
+                        severity="high", outcome="deny",
+                        metadata={"reason": "malware_quarantine"},
+                        ip=get_client_ip(request),
+                        user_agent=request.headers.get("user-agent"))
+        raise HTTPException(status_code=451, detail={
+            "code": "file_quarantined", "message": "File is quarantined; contact your administrator.",
+        })
+    if scan_status == "error":
+        raise HTTPException(status_code=503, detail={
+            "code": "scan_error", "message": "Scan failed; retry after operator review.",
+        })
+    if scan_status != "clean":
+        raise HTTPException(status_code=403, detail="File not available")
     try:
         stream = await fs_bucket.open_download_stream(ObjectId(meta["gridfs_id"]))
     except Exception:

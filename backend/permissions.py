@@ -241,3 +241,29 @@ async def active_breakglass_for(user_id: str) -> list:
         "revoked_at": None,
     }).to_list(50)
     return rows
+
+
+# --------------------------------------------------------------------------- #
+# Role → permission resolution                                                 #
+# --------------------------------------------------------------------------- #
+def permissions_for_roles(*roles: str) -> set:
+    """Return the UNION of permissions granted to any of `roles`. Used to
+    resolve role-based endpoints through the central catalog so RBAC coverage
+    stays consistent."""
+    out: set = set()
+    for r in roles:
+        out.update(ROLE_PERMISSIONS.get(r, set()))
+    return out
+
+
+def route_permissions_declared(dep_marker: str) -> list:
+    """Given a stringified dependency marker (e.g. `require_roles(admin,practitioner)`),
+    return the derived permission list. Used by the route-inventory test."""
+    if dep_marker.startswith("require_permission("):
+        inner = dep_marker[len("require_permission("):-1]
+        return [p.strip().strip("'\"") for p in inner.split(",") if p.strip()]
+    if dep_marker.startswith("require_roles("):
+        inner = dep_marker[len("require_roles("):-1]
+        roles = [p.strip().strip("'\"") for p in inner.split(",") if p.strip()]
+        return sorted(permissions_for_roles(*roles))
+    return []

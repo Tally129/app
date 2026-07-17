@@ -475,6 +475,11 @@ async def create_plan(payload: PlanIn, request: Request,
     doc["practitioner_id"] = user["id"]
     doc["created_at"] = datetime.now(timezone.utc)
     doc["updated_at"] = doc["created_at"]
+    doc["lifecycle_status"] = "draft"
+    doc["amendments"] = []
+    doc["prior_versions"] = []
+    doc["finalized_at"] = None
+    doc["finalized_by"] = None
     await db.treatment_plans.insert_one(doc)
     await log_audit(db, user["id"], user["email"], "plan.create",
                     resource_type="plan", resource_id=doc["id"],
@@ -486,9 +491,11 @@ async def create_plan(payload: PlanIn, request: Request,
 @api.put("/treatment-plans/{plan_id}", response_model=PlanOut)
 async def update_plan(plan_id: str, payload: PlanIn, request: Request,
                       user=Depends(require_roles("practitioner", "admin"))):
+    from clinical_lock import refuse_edit_if_finalized
     p = await db.treatment_plans.find_one({"id": plan_id})
     if not p:
         raise HTTPException(status_code=404, detail="Plan not found")
+    refuse_edit_if_finalized(p, status_field="lifecycle_status")
     updates = payload.dict()
     updates["updated_at"] = datetime.now(timezone.utc)
     await db.treatment_plans.update_one({"id": plan_id}, {"$set": updates})
@@ -497,6 +504,34 @@ async def update_plan(plan_id: str, payload: PlanIn, request: Request,
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
     p = await db.treatment_plans.find_one({"id": plan_id})
     return await _hydrate_plan(p, user)
+
+
+@api.post("/treatment-plans/{plan_id}/finalize", response_model=PlanOut)
+async def finalize_plan(plan_id: str, request: Request,
+                        user=Depends(require_roles("practitioner", "admin"))):
+    from clinical_lock import finalize_document
+    doc = await finalize_document(
+        db, "treatment_plans", plan_id, user,
+        immutable_fields=("title", "objective", "steps", "duration_weeks",
+                          "assessment", "plan", "notes"),
+        audit_action="plan.finalize", request=request,
+        status_field="lifecycle_status",
+    )
+    return await _hydrate_plan(doc, user)
+
+
+@api.post("/treatment-plans/{plan_id}/amend", response_model=PlanOut)
+async def amend_plan(plan_id: str, payload: dict, request: Request,
+                     user=Depends(require_roles("practitioner", "admin"))):
+    from clinical_lock import amend_document
+    doc = await amend_document(
+        db, "treatment_plans", plan_id, user,
+        content=str(payload.get("content") or ""),
+        reason=str(payload.get("reason") or ""),
+        audit_action="plan.amend", request=request,
+        status_field="lifecycle_status",
+    )
+    return await _hydrate_plan(doc, user)
 
 
 # ---------- Reminder settings ----------
