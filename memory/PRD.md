@@ -134,25 +134,30 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 ## Mocked / Pending Integrations
 | Service | Status |
 |---------|--------|
-| **Claude Sonnet 4.5 (LLM SOAP)** | ✅ LIVE via `EMERGENT_LLM_KEY` (BAA migration to direct Anthropic key pending) |
-| **Emergent Google SSO** | ✅ LIVE (BAA migration to direct Google OAuth pending) |
+| **LLM (Claude Sonnet 4.5)** | ✅ LIVE — `llm_client.py` auto-routes to `ANTHROPIC_API_KEY` (direct, BAA-eligible) when set, else `EMERGENT_LLM_KEY` fallback |
+| **Google SSO** | ✅ BOTH wired — Emergent-managed active by default; direct OAuth (`/api/auth/google/oauth/*`) activates when `GOOGLE_OAUTH_CLIENT_ID/SECRET/REDIRECT_URI` set. Uses one-time handoff id (no JWTs in URL). |
+| **Email (SendGrid)** | ✅ `notifiers.send_email()` uses real SDK when `SENDGRID_API_KEY` + `SENDGRID_FROM_EMAIL` set, else logs `sent_stub` |
+| **SMS (Twilio)** | ✅ `notifiers.send_sms()` uses real SDK when `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_FROM_NUMBER` set, else logs `sent_stub` |
 | **Web push (VAPID)** | ✅ LIVE — auto-subscribe + 5 trigger hooks wired |
 | coturn TURN | ✅ env-var support; user deploys server |
-| SendGrid email | stub |
-| Twilio SMS | stub |
 | Stripe | stub |
 
 ## Roadmap
 
 ### P1 — Next up
-- **`server.py` modular refactor** — ✅ **Phase 16 (Feb 17, 2026)** — server.py 4703 → 1960 lines. Extracted routers: `auth`, `ops`, `telehealth`, `forms_protocols`, `compliance` (all in `/app/backend/routers/`). Shared `deps.py` holds mongo/api/helpers. 41/41 backend tests GREEN including new `test_iter15_refactor.py` (23 cases). **Follow-up:** further split server.py's remaining 1960 lines (Clients/Intake/Notes/Files/Appointments/Availability/Memberships/Invoices/Plans/Reminders/Symptoms/Labs/Messages/Public/Dashboard/Admin) into individual routers — target <500 lines per file.
-- Migrate off Emergent-managed keys (Anthropic direct, Google OAuth direct) to enable direct BAA signing — user has already been briefed on the AWS + BAA plan.
-- Migrate `AppointmentStatus` from Literal to a proper Python `Enum` + DB sanitizer at startup (defense-in-depth against the recurring "Literal vs DB drift" class of bug)
+- **`server.py` modular refactor** — ✅ **Phase 16 (Feb 17, 2026)** — server.py **4703 → 632 lines** (**87% reduction**). Extracted routers: `auth`, `clients`, `admin`, `appointments`, `health_track`, `ops`, `telehealth`, `forms_protocols`, `compliance` under `/app/backend/routers/`. Shared `deps.py` holds mongo/api/helpers. Testing agent iteration 16 reports **207/208 backend tests green**.
+- **SDK abstraction layer** — ✅ **Phase 16 (Feb 17, 2026)** — `llm_client.py` (Anthropic direct → Emergent fallback), `notifiers.py` (SendGrid/Twilio real → sent_stub fallback). `/api/health` now returns `integrations` dict (`llm`, `email`, `sms`, `google_oauth_direct`). Direct Google OAuth wired via one-time handoff scheme (no JWTs in URL).
+- **User action items (BAA prep):**
+  - Sign up at anthropic.com → request BAA via sales@anthropic.com → generate API key → paste into `ANTHROPIC_API_KEY` in `/app/backend/.env` → done.
+  - Google Cloud Console: create OAuth 2.0 credentials → set `GOOGLE_OAUTH_CLIENT_ID/SECRET/REDIRECT_URI` + `FRONTEND_ORIGIN` → done.
+  - Twilio (free-tier already works) — verify destination numbers → paste `TWILIO_ACCOUNT_SID/AUTH_TOKEN/FROM_NUMBER` → done.
+  - SendGrid (free-tier already works) — verify sender email → paste `SENDGRID_API_KEY/FROM_EMAIL` → done.
+- Migrate `AppointmentStatus` from Literal to a proper Python `Enum` + DB sanitizer at startup
 - Validate `keys.p256dh` / `keys.auth` on `POST /api/push/subscribe`
-- Add `_httpx` timeout = 7s on Google session exchange (currently 15s — risk of worker stall)
-- Track + cancel background loops on shutdown event
 
 ### P2 — Future
+- Add common-password blocklist to `auth_utils.validate_password_strength` (Phase 15 NIST rule miss — "Password1234" passed length + name-contains checks)
+- Split remaining oversized files: `forms_protocols.py` (1060 lines → forms + protocols + library), `ops.py` (771 → treatments + inventory + pos + timeclock)
 - LLM-assisted intake summarizer (one-paragraph chart preview)
 - iPad-optimized provider view
 - Recurring appointment UI: edit-one-vs-edit-series + drag to reschedule
@@ -161,11 +166,13 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 ### P3 — Nice-to-have
 - Push: per-device manager (revoke per browser)
 - Web push for staff: shift-handoff notes, time-clock punch confirmations
+- Rewrite `server.py::seed_demo` + `_appointment_reminder_loop` to use `notifiers.send_*` instead of direct `integration_log` inserts (small cleanup)
 
 ## Known Limitations
 - HIPAA banner stays until BAA-covered hosting + encryption-at-rest
 - WebRTC needs TURN for restrictive networks (bring your own coturn)
 - Service worker registers only in production builds
 - `TEST123` is 7 chars — predates 12-char NIST policy (legacy admin, still accepted for login but new passwords require 12+)
+- `test_phase4.py::test_change_password_and_revert` has a pre-existing `from backend.auth_utils` import bug — needs rewrite
 
-_Last updated: Feb 17, 2026 (Phase 16 — server.py refactor 4703 → 1960 lines + iteration 14 carry-over fixes)_
+_Last updated: Feb 17, 2026 (Phase 16 — server.py refactor + SDK abstraction + BAA-ready integration scaffolding)__

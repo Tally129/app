@@ -71,7 +71,7 @@ async def _complete_anthropic_direct(
         from anthropic import AsyncAnthropic  # official SDK
     except ImportError as e:  # pragma: no cover
         raise RuntimeError(f"anthropic SDK missing: {e}")
-    client = AsyncAnthropic(api_key=api_key)
+    client = AsyncAnthropic(api_key=api_key, timeout=90.0)
     resp = await client.messages.create(
         model=DEFAULT_ANTHROPIC_MODEL,
         max_tokens=max_tokens,

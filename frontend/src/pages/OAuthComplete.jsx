@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth, roleHome } from "../lib/auth";
+import { api } from "../lib/api";
 
 /**
  * Landing route after the /api/auth/google/oauth/callback redirect.
- * Grabs the ?access=<jwt>&refresh=<jwt> tokens from the URL, hydrates auth,
- * then bounces to the correct role home. Renders a small "signing you in…"
- * card while the request is in flight.
+ * Reads a single-use `handoff` id from the URL, POSTs it to
+ * /api/auth/google/oauth/exchange to receive the JWTs, then bounces to the
+ * user's portal. The tokens themselves never appear in the URL.
  */
 export default function OAuthComplete() {
   const [params] = useSearchParams();
@@ -15,15 +16,20 @@ export default function OAuthComplete() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    const access = params.get("access");
-    const refresh = params.get("refresh");
-    if (!access || !refresh) {
-      setError("Missing tokens in the OAuth callback URL.");
+    const handoff = params.get("handoff");
+    if (!handoff) {
+      setError("Missing sign-in handoff. Please try again from the sign-in page.");
       return;
     }
-    completeOAuthFromTokens(access, refresh)
-      .then(({ user }) => navigate(roleHome(user.role), { replace: true }))
-      .catch((e) => setError(e?.response?.data?.detail || e.message || "Login failed"));
+    (async () => {
+      try {
+        const { data } = await api.post("/auth/google/oauth/exchange", { handoff_id: handoff });
+        const { user } = await completeOAuthFromTokens(data.access_token, data.refresh_token);
+        navigate(roleHome(user.role), { replace: true });
+      } catch (e) {
+        setError(e?.response?.data?.detail || e.message || "Sign-in failed");
+      }
+    })();
   }, [params, completeOAuthFromTokens, navigate]);
 
   return (

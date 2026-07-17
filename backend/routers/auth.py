@@ -424,5 +424,45 @@ async def google_oauth_callback(request: Request, code: Optional[str] = None,
         # Deliberately no fallback — the redirect target must come from env only.
         raise HTTPException(status_code=500,
                             detail="FRONTEND_ORIGIN env var required for OAuth completion redirect")
-    complete_url = f"{frontend_origin.rstrip('/')}/oauth-complete?access={access}&refresh={refresh}"
+    # Store tokens under a one-time handoff id (5-minute TTL) so we never expose them
+    # in the browser URL, history, or referer headers.
+    handoff_id = secrets.token_urlsafe(24)
+    await db.oauth_handoffs.insert_one({
+        "handoff_id": handoff_id,
+        "user_id": user["id"],
+        "access_token": access,
+        "refresh_token": refresh,
+        "created_at": datetime.now(timezone.utc),
+        "consumed": False,
+    })
+    complete_url = f"{frontend_origin.rstrip('/')}/oauth-complete?handoff={handoff_id}"
     return RedirectResponse(url=complete_url, status_code=302)
+
+
+@api.post("/auth/google/oauth/exchange")
+async def google_oauth_exchange(payload: dict):
+    """Redeem a one-time OAuth handoff id (from callback redirect) for access+refresh tokens.
+    Handoff is single-use and expires after 5 minutes."""
+    handoff_id = (payload or {}).get("handoff_id")
+    if not handoff_id:
+        raise HTTPException(status_code=400, detail="Missing handoff_id")
+    row = await db.oauth_handoffs.find_one_and_update(
+        {"handoff_id": handoff_id, "consumed": False},
+        {"$set": {"consumed": True, "consumed_at": datetime.now(timezone.utc)}},
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Handoff already used or unknown")
+    age = (datetime.now(timezone.utc) - row["created_at"]).total_seconds()
+    if age > 300:
+        raise HTTPException(status_code=410, detail="Handoff expired (5 min TTL)")
+    user = await db.users.find_one({"id": row["user_id"]})
+    if not user or not user.get("is_active", True):
+        raise HTTPException(status_code=403, detail="User inactive")
+    return {
+        "access_token": row["access_token"],
+        "refresh_token": row["refresh_token"],
+        "user": {
+            "id": user["id"], "email": user["email"], "full_name": user.get("full_name"),
+            "role": user.get("role"), "picture_url": user.get("picture_url"),
+        },
+    }
