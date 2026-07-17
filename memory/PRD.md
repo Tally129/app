@@ -134,8 +134,8 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 ## Mocked / Pending Integrations
 | Service | Status |
 |---------|--------|
-| **Claude Sonnet 4.5 (LLM SOAP)** | ✅ LIVE via `EMERGENT_LLM_KEY` |
-| **Emergent Google SSO** | ✅ LIVE |
+| **Claude Sonnet 4.5 (LLM SOAP)** | ✅ LIVE via `EMERGENT_LLM_KEY` (BAA migration to direct Anthropic key pending) |
+| **Emergent Google SSO** | ✅ LIVE (BAA migration to direct Google OAuth pending) |
 | **Web push (VAPID)** | ✅ LIVE — auto-subscribe + 5 trigger hooks wired |
 | coturn TURN | ✅ env-var support; user deploys server |
 | SendGrid email | stub |
@@ -145,7 +145,8 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 ## Roadmap
 
 ### P1 — Next up
-- **`server.py` modular refactor** into `routers/` — file is now ~3.1k lines (deferred 5 sessions). Its own dedicated session.
+- **`server.py` modular refactor** — ✅ **Phase 16 (Feb 17, 2026)** — server.py 4703 → 1960 lines. Extracted routers: `auth`, `ops`, `telehealth`, `forms_protocols`, `compliance` (all in `/app/backend/routers/`). Shared `deps.py` holds mongo/api/helpers. 41/41 backend tests GREEN including new `test_iter15_refactor.py` (23 cases). **Follow-up:** further split server.py's remaining 1960 lines (Clients/Intake/Notes/Files/Appointments/Availability/Memberships/Invoices/Plans/Reminders/Symptoms/Labs/Messages/Public/Dashboard/Admin) into individual routers — target <500 lines per file.
+- Migrate off Emergent-managed keys (Anthropic direct, Google OAuth direct) to enable direct BAA signing — user has already been briefed on the AWS + BAA plan.
 - Migrate `AppointmentStatus` from Literal to a proper Python `Enum` + DB sanitizer at startup (defense-in-depth against the recurring "Literal vs DB drift" class of bug)
 - Validate `keys.p256dh` / `keys.auth` on `POST /api/push/subscribe`
 - Add `_httpx` timeout = 7s on Google session exchange (currently 15s — risk of worker stall)
@@ -165,6 +166,6 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 - HIPAA banner stays until BAA-covered hosting + encryption-at-rest
 - WebRTC needs TURN for restrictive networks (bring your own coturn)
 - Service worker registers only in production builds
-- `TEST123` is 7 chars — predates 8-char policy
+- `TEST123` is 7 chars — predates 12-char NIST policy (legacy admin, still accepted for login but new passwords require 12+)
 
-_Last updated: May 5, 2026 (Phase 14 — Auto-attach supplement directions)_
+_Last updated: Feb 17, 2026 (Phase 16 — server.py refactor 4703 → 1960 lines + iteration 14 carry-over fixes)_
