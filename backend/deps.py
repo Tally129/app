@@ -195,6 +195,7 @@ def require_roles(*roles):
                 await log_audit(
                     db, user["id"], user["email"], "auditor.break_glass_read",
                     resource_type="endpoint", resource_id=request.url.path,
+                    severity="high", outcome="allow",
                     metadata={"emergency": True, "method": request.method},
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"),
                 )

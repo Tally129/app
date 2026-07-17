@@ -159,10 +159,22 @@ async def test_ws_ticket_single_use(admin_headers, telehealth_appt):
     ticket = r.json()["ticket"]
     url = f"{WS_API}/ws/visit/{appt_id}?ticket={ticket}"
 
-    # First use: connection accepted, joined event sent
-    async with websockets.connect(url) as ws:
-        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+    # First use: connection accepted, joined event sent. Ingress WS handshakes
+    # can occasionally spike; the connect has an explicit generous open_timeout
+    # and one retry to eliminate false negatives without masking real defects.
+    async def _connect_once():
+        return await websockets.connect(url, open_timeout=15)
+
+    try:
+        ws = await _connect_once()
+    except Exception:
+        await asyncio.sleep(1.5)
+        ws = await _connect_once()
+    try:
+        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=15))
         assert msg["type"] == "joined"
+    finally:
+        await ws.close()
 
     # Second use of same ticket -> rejected with 4401
     try:

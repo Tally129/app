@@ -6,6 +6,7 @@ Extracted from server.py during Phase 16 refactor.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +16,7 @@ from audit import get_client_ip, log_audit
 from deps import (
     _resolve_self_client, _strip_id, api, db, get_current_user, require_roles,
 )
+from notifiers import push_to_user
 from models import (
     AppointmentIn, AppointmentOut, AppointmentUpdate,
     AvailabilityIn, AvailabilityOut,

@@ -184,6 +184,7 @@ const NAV = {
         { to: "/portal/admin/users", label: "Users & Roles", icon: UserCog },
         { to: "/portal/admin/reminders", label: "Reminders", icon: Bell },
         { to: "/portal/admin/audit", label: "Audit Log", icon: Activity },
+        { to: "/portal/admin/sessions", label: "Sessions", icon: Activity },
         { to: "/portal/admin/compliance", label: "HIPAA Compliance", icon: ShieldCheck },
         { to: "/portal/admin/account", label: "My Account", icon: UserCircle },
         { to: "/portal/admin/security", label: "Security", icon: ShieldCheck },

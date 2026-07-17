@@ -187,6 +187,17 @@ def json_dumps_body(obj) -> bytes:
 
 @api.post("/auth/login")
 async def login(payload: LoginIn, request: Request):
+    from rate_limit import enforce_login_rate, is_locked, record_login_failure, reset_login_failures
+    # 1) IP + email sliding-window rate limit — protects against distributed brute force.
+    enforce_login_rate(request, payload.email)
+    # 2) Per-email lockout — brute-force controls independent of the rate window.
+    locked, retry_after = is_locked(payload.email)
+    if locked:
+        raise HTTPException(status_code=423, detail={
+            "code": "account_locked",
+            "retry_after_seconds": retry_after,
+        })
+
     user = await db.users.find_one({"email": payload.email.lower()})
     if not user or not verify_password(payload.password, user.get("password_hash", "")):
         await db.login_history.insert_one({
@@ -196,6 +207,12 @@ async def login(payload: LoginIn, request: Request):
             "ip": get_client_ip(request), "user_agent": request.headers.get("user-agent"),
             "ts": datetime.now(timezone.utc),
         })
+        record_login_failure(payload.email)
+        await log_audit(db, user.get("id") if user else None, payload.email.lower(),
+                        "auth.login_fail",
+                        severity="warning", outcome="failure",
+                        ip=get_client_ip(request),
+                        user_agent=request.headers.get("user-agent"))
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if not user.get("is_active", True):
@@ -207,8 +224,12 @@ async def login(payload: LoginIn, request: Request):
         if not payload.mfa_token:
             return {"access_token": "", "refresh_token": "", "user": to_user_out(user), "mfa_required": True}
         if not verify_mfa(user.get("mfa_secret", ""), payload.mfa_token):
+            record_login_failure(payload.email)
             raise HTTPException(status_code=401, detail="Invalid MFA code")
         mfa_satisfied_now = True
+
+    # Success — clear any accumulated failure counter.
+    reset_login_failures(payload.email)
 
     # Active-session limit check BEFORE creating a new session.
     limit_check = await enforce_active_session_limit(user)
@@ -522,7 +543,9 @@ async def _reset_rate_limit_ok(email_hash: str, ip: Optional[str]) -> bool:
 @api.post("/auth/forgot-password")
 async def forgot_password(payload: dict, request: Request):
     """Trigger a password-reset email. Response is IDENTICAL for known + unknown emails."""
+    from rate_limit import enforce_forgot_rate
     email = str(payload.get("email") or "").strip().lower()
+    enforce_forgot_rate(request, email)
     ip = get_client_ip(request)
     email_hash = _email_hash(email) if email else ""
     now = datetime.now(timezone.utc)

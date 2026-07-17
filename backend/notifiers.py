@@ -148,3 +148,50 @@ async def send_sms(
         await db.integration_log.insert_one(log_doc)
         logger.warning("Twilio send failed: %s", e)
         return "failed"
+
+
+
+# --------------------------------------------------------------------------- #
+# Web-push (VAPID) — relocated from server.py so routers can call it without   #
+# a circular import.                                                           #
+# --------------------------------------------------------------------------- #
+import json as _push_json
+
+
+def _send_push_to_user(sub_doc, payload):
+    try:
+        from pywebpush import webpush
+        webpush(
+            subscription_info={
+                "endpoint": sub_doc["endpoint"],
+                "keys": sub_doc.get("keys", {}),
+            },
+            data=_push_json.dumps(payload),
+            vapid_private_key=os.environ.get("VAPID_PRIVATE_KEY", ""),
+            vapid_claims={"sub": os.environ.get("VAPID_CONTACT", "mailto:admin@natmedsol.local")},
+            ttl=60 * 60 * 24,
+        )
+        return True
+    except Exception as e:
+        logger.info("push send failed for %s: %s", sub_doc.get("endpoint", "?")[:40], e)
+        return False
+
+
+async def push_to_user(user_id, title, body, url="/portal", tag=None):
+    """Best-effort push to all active subscriptions for a user."""
+    if not os.environ.get("VAPID_PRIVATE_KEY"):
+        return 0
+    from deps import db  # lazy import to break the router→server cycle
+    subs = await db.push_subscriptions.find({"user_id": user_id}).to_list(20)
+    sent = 0
+    payload = {"title": title, "body": body, "url": url, "tag": tag or title}
+    dead = []
+    for s in subs:
+        ok = _send_push_to_user(s, payload)
+        if ok:
+            sent += 1
+        else:
+            dead.append(s["endpoint"])
+    if dead:
+        await db.push_subscriptions.delete_many({"endpoint": {"$in": dead}})
+    return sent

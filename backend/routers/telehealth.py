@@ -19,6 +19,7 @@ from fastapi import (
     Depends, File, HTTPException, Query, Request, UploadFile,
     WebSocket, WebSocketDisconnect,
 )
+from fastapi.responses import StreamingResponse
 
 from audit import get_client_ip, log_audit
 from deps import (

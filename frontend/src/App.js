@@ -25,6 +25,7 @@ import Availability from "./pages/provider/Availability";
 import AdminOverview from "./pages/admin/AdminOverview";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminAudit from "./pages/admin/AdminAudit";
+import AdminSessionExplorer from "./pages/admin/AdminSessionExplorer";
 import AdminReminders from "./pages/admin/AdminReminders";
 import AdminNotesList from "./pages/admin/AdminNotesList";
 import AdminFilesList from "./pages/admin/AdminFilesList";
@@ -132,6 +133,7 @@ function App() {
             <Route path="/portal/admin" element={<Protected roles={["admin"]}><AdminOverview /></Protected>} />
             <Route path="/portal/admin/users" element={<Protected roles={["admin"]}><AdminUsers /></Protected>} />
             <Route path="/portal/admin/audit" element={<Protected roles={["admin"]}><AdminAudit /></Protected>} />
+            <Route path="/portal/admin/sessions" element={<Protected roles={["admin"]}><AdminSessionExplorer /></Protected>} />
             <Route path="/portal/admin/reminders" element={<Protected roles={["admin"]}><AdminReminders /></Protected>} />
             <Route path="/portal/admin/security" element={<Protected roles={["admin"]}><Security /></Protected>} />
             <Route path="/portal/admin/account" element={<Protected roles={["admin"]}><MyAccount /></Protected>} />

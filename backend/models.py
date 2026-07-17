@@ -158,6 +158,7 @@ class Amendment(BaseModel):
     author_id: str
     author_name: Optional[str] = None
     content: str
+    reason: Optional[str] = None
     ts: datetime
 
 
@@ -166,11 +167,17 @@ class NoteOut(NoteIn):
     practitioner_id: str
     practitioner_name: Optional[str] = None
     created_at: datetime
+    updated_at: Optional[datetime] = None
     amendments: List[Amendment] = []
+    status: Optional[str] = "draft"
+    finalized_at: Optional[datetime] = None
+    finalized_by: Optional[str] = None
+    prior_versions: List[Dict[str, Any]] = []
 
 
 class AmendIn(BaseModel):
     content: str
+    reason: Optional[str] = None
 
 
 # --------- Files ---------
@@ -184,6 +191,9 @@ class FileMetaOut(BaseModel):
     uploaded_by: str
     uploaded_by_name: Optional[str] = None
     created_at: datetime
+    sha256: Optional[str] = None
+    scan_status: Optional[str] = None
+    deleted_at: Optional[datetime] = None
 
 
 # --------- Appointments ---------

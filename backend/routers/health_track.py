@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import Depends, HTTPException, Query, Request
 
 from audit import get_client_ip, log_audit
+from notifiers import push_to_user
 from deps import (
     _resolve_self_client, _strip_id, api, db, get_current_user, require_roles,
 )

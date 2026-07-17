@@ -1,5 +1,5 @@
 """
-Dashboard stats + Admin audit/user routes.
+Dashboard stats + Admin audit/user/session routes.
 
 Extracted from server.py during Phase 16 refactor.
 """
@@ -10,9 +10,12 @@ from typing import List, Optional
 
 from fastapi import Depends, HTTPException, Query, Request
 
-from audit import get_client_ip, log_audit
-from deps import _strip_id, api, db, get_current_user, require_roles, to_user_out
-from models import AuditLogOut, UserOut
+from audit import get_client_ip, log_audit, verify_audit_chain
+from auth_utils import hash_password
+from deps import _strip_id, _resolve_self_client, api, db, get_current_user, require_roles, to_user_out
+from models import AuditLogOut, UserCreate, UserOut, new_id
+from permissions import P, require_permission
+from sessions import list_active_sessions_sanitized, revoke_all_user_sessions, revoke_family
 
 
 # =================== DASHBOARD ===================
@@ -103,10 +106,115 @@ async def admin_update_role(user_id: str, body: dict, request: Request, user=Dep
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
     await db.users.update_one({"id": user_id}, {"$set": {"role": role}})
+    # Role change is a security event — bump session_version + revoke every family.
+    await db.users.update_one({"id": user_id},
+                              {"$inc": {"session_version": 1}})
+    revoked = await revoke_all_user_sessions(user_id, "role_change")
     await log_audit(db, user["id"], user["email"], "admin.update_role",
-                    resource_type="user", resource_id=user_id, metadata={"role": role},
+                    resource_type="user", resource_id=user_id, metadata={"role": role, **revoked},
+                    severity="high", outcome="success",
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
     target = await db.users.find_one({"id": user_id})
     return to_user_out(target)
+
+
+@api.put("/admin/users/{user_id}/active")
+async def admin_toggle_active(user_id: str, body: dict, request: Request,
+                              user=Depends(require_permission(P.USER_DEACTIVATE))):
+    active = bool((body or {}).get("is_active", False))
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    await db.users.update_one({"id": user_id}, {"$set": {"is_active": active}})
+    # Deactivation is a security event — revoke all sessions immediately.
+    revoked = None
+    if not active:
+        await db.users.update_one({"id": user_id}, {"$inc": {"session_version": 1}})
+        revoked = await revoke_all_user_sessions(user_id, "user_deactivated")
+    await log_audit(db, user["id"], user["email"], "admin.deactivate_user" if not active else "admin.activate_user",
+                    resource_type="user", resource_id=user_id,
+                    severity="high", outcome="success",
+                    metadata={"is_active": active, **(revoked or {})},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return {"ok": True, "is_active": active}
+
+
+# =================== SESSION EXPLORER ===================
+@api.get("/admin/sessions")
+async def admin_list_sessions(user_id: Optional[str] = None, limit: int = 200,
+                              user=Depends(require_permission(P.SESSION_LIST_ANY))):
+    """List active workforce/user sessions. `user_id` optional filter."""
+    q = {"revoked_at": None}
+    if user_id:
+        q["user_id"] = user_id
+    rows = await db.user_sessions.find(q).sort("last_used_at", -1).to_list(min(max(1, limit), 500))
+    users = {u["id"]: u async for u in db.users.find(
+        {"id": {"$in": list({r["user_id"] for r in rows if r.get("user_id")})}},
+        {"id": 1, "email": 1, "full_name": 1, "role": 1},
+    )}
+    out = []
+    for r in rows:
+        u = users.get(r.get("user_id")) or {}
+        out.append({
+            "id": r["id"],
+            "user_id": r.get("user_id"),
+            "email": u.get("email"),
+            "full_name": u.get("full_name"),
+            "role": u.get("role"),
+            "created_at": r.get("created_at"),
+            "last_used_at": r.get("last_used_at"),
+            "absolute_expires_at": r.get("absolute_expires_at"),
+            "idle_timeout_minutes": r.get("idle_timeout_minutes"),
+            "ip_first": r.get("ip_first"),
+            "ip_last": r.get("ip_last"),
+            # Truncated UA to avoid over-broad device fingerprinting.
+            "user_agent": (r.get("user_agent") or "")[:120],
+            "mfa_satisfied_at": r.get("mfa_satisfied_at"),
+        })
+    return out
+
+
+@api.post("/admin/sessions/{session_id}/revoke")
+async def admin_revoke_session(session_id: str, request: Request,
+                               user=Depends(require_permission(P.SESSION_REVOKE_ANY))):
+    row = await db.user_sessions.find_one({"id": session_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.get("revoked_at"):
+        return {"ok": True, "already_revoked": True}
+    now = datetime.now(timezone.utc)
+    await db.user_sessions.update_one(
+        {"id": session_id, "revoked_at": None},
+        {"$set": {"revoked_at": now, "revoke_reason": "admin_revoke"}},
+    )
+    if row.get("family_id"):
+        await revoke_family(row["family_id"], "admin_revoke")
+    await log_audit(db, user["id"], user["email"], "admin.session_revoke",
+                    resource_type="user_session", resource_id=session_id,
+                    severity="high", outcome="success",
+                    metadata={"target_user_id": row.get("user_id")},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return {"ok": True}
+
+
+@api.post("/admin/users/{target_user_id}/revoke-all-sessions")
+async def admin_revoke_all_sessions(target_user_id: str, request: Request,
+                                    user=Depends(require_permission(P.SESSION_REVOKE_ANY))):
+    target = await db.users.find_one({"id": target_user_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    result = await revoke_all_user_sessions(target_user_id, "admin_revoke_all")
+    await log_audit(db, user["id"], user["email"], "admin.session_revoke_all",
+                    resource_type="user", resource_id=target_user_id,
+                    severity="high", outcome="success",
+                    metadata=result,
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return {"ok": True, **result}
+
+
+@api.get("/admin/audit/verify-chain")
+async def admin_verify_audit_chain(limit: int = 5000,
+                                   user=Depends(require_permission(P.AUDIT_READ))):
+    return await verify_audit_chain(db, limit=limit)
 
 

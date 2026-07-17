@@ -75,6 +75,7 @@ from routers import ops as _ops_routes  # noqa: F401
 from routers import telehealth as _telehealth_routes  # noqa: F401
 from routers import forms_protocols as _forms_protocols_routes  # noqa: F401
 from routers import compliance as _compliance_routes  # noqa: F401
+from routers import breakglass as _breakglass_routes  # noqa: F401
 
 
 app = FastAPI(title="NatMedSol EMR API")
@@ -275,43 +276,7 @@ async def push_unsubscribe(payload: dict, user=Depends(get_current_user)):
 
 
 # ---------- Push broadcast helper ----------
-def _send_push_to_user(sub_doc, payload):
-    try:
-        from pywebpush import webpush, WebPushException
-        webpush(
-            subscription_info={
-                "endpoint": sub_doc["endpoint"],
-                "keys": sub_doc.get("keys", {}),
-            },
-            data=json.dumps(payload),
-            vapid_private_key=os.environ.get("VAPID_PRIVATE_KEY", ""),
-            vapid_claims={"sub": os.environ.get("VAPID_CONTACT", "mailto:admin@natmedsol.local")},
-            ttl=60 * 60 * 24,
-        )
-        return True
-    except Exception as e:
-        logger.info("push send failed for %s: %s", sub_doc.get("endpoint", "?")[:40], e)
-        return False
-
-
-async def push_to_user(user_id, title, body, url="/portal", tag=None):
-    """Best-effort push to all active subscriptions for a user. Drops 404/410 endpoints."""
-    if not os.environ.get("VAPID_PRIVATE_KEY"):
-        return 0
-    subs = await db.push_subscriptions.find({"user_id": user_id}).to_list(20)
-    sent = 0
-    payload = {"title": title, "body": body, "url": url, "tag": tag or title}
-    dead = []
-    for s in subs:
-        ok = _send_push_to_user(s, payload)
-        if ok:
-            sent += 1
-        else:
-            dead.append(s["endpoint"])
-    # cleanup dead endpoints
-    if dead:
-        await db.push_subscriptions.delete_many({"endpoint": {"$in": dead}})
-    return sent
+from notifiers import push_to_user  # re-exported for legacy callers
 
 
 # ---------- Background scheduler: appointment reminders ----------
@@ -394,6 +359,14 @@ async def _expiring_inventory_loop():
 
 @app.middleware("http")
 async def hipaa_security_headers(request: Request, call_next):
+    # HTTPS enforcement — in HIPAA mode we refuse plaintext HTTP. Behind the
+    # ingress the scheme comes from X-Forwarded-Proto; fall back to url.scheme.
+    _hipaa = os.environ.get("HIPAA_MODE", "false").lower() in {"1", "true", "yes", "on"}
+    if _hipaa:
+        proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+        if proto and proto != "https":
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"detail": "HTTPS required"}, status_code=400)
     resp = await call_next(request)
     # HSTS — force HTTPS for 1 year, include subdomains
     resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
@@ -401,6 +374,21 @@ async def hipaa_security_headers(request: Request, call_next):
     resp.headers["X-Frame-Options"] = "DENY"
     resp.headers["Referrer-Policy"] = "no-referrer"
     resp.headers["Permissions-Policy"] = "geolocation=(), microphone=(self), camera=(self)"
+    # Content-Security-Policy — narrowed for a same-origin SPA. Frontend uses
+    # inline styles from tailwind + CRA runtime, so 'unsafe-inline' style/script
+    # is retained for now; tighten once bundler emits nonces.
+    resp.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "img-src 'self' data: blob: https:; "
+        "media-src 'self' blob:; "
+        "connect-src 'self' https: wss:; "
+        "font-src 'self' data: https:; "
+        "style-src 'self' 'unsafe-inline' https:; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
     return resp
 
 @app.on_event("startup")
@@ -426,6 +414,17 @@ async def seed_demo():
         await db.client_supplement_assignments.create_index([("client_id", 1), ("active", 1)])
         await db.client_supplement_assignments.create_index([("client_id", 1), ("sheet_id", 1)], unique=False)
         await db.protocol_enrollments.create_index("status")
+        # Sprint 3+ collections
+        await db.audit_logs.create_index([("ts", 1)])
+        await db.audit_logs.create_index("action")
+        await db.audit_logs.create_index("severity")
+        await db.security_events.create_index([("ts", -1)])
+        await db.security_events.create_index("handled")
+        await db.breakglass_sessions.create_index("user_id")
+        await db.breakglass_sessions.create_index("expires_at")
+        await db.breakglass_sessions.create_index("target_client_id")
+        await db.files.create_index("deleted_at")
+        await db.visit_notes.create_index("status")
     except Exception as e:
         logger.warning("Index creation warning: %s", e)
 
