@@ -144,6 +144,19 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 
 ## Roadmap
 
+### P0 — In-flight
+- **Phase 1 Security Hardening (per NatMedSol_Phase_1_Security_Architecture_v1.0)** — see Sprint tracker below.
+
+### Sprint status
+- **Sprint 1 — Config validation, JWT (iss/aud/jti/sid), workforce MFA hard cutover, secure password reset — ✅ COMPLETE (Feb 17, 2026)**. 199/200 backend tests green. See `_Sprint 1 Delivery_` below.
+- Sprint 2 — Opaque refresh sessions, rotation, reuse detection, idle/absolute timeouts, revocation.
+- Sprint 3 — Permission catalog, role mapping, patient/resource scope, break-glass workflow.
+- Sprint 4 — Audit event schema, redaction, fail-closed/outbox, tamper-evident hash chain.
+- Sprint 5 — Private file pipeline with validation, quarantine, malware status, checksum, versioning.
+- Sprint 6 — Approved AI provider registry, PHI mode, interaction records, practitioner approval.
+- Sprint 7 — Security event rules, alert workflow, admin security dashboard.
+- Sprint 8 — Backup/restore verification, runbooks, go-live checklist.
+
 ### P1 — Next up
 - **`server.py` modular refactor** — ✅ **Phase 16 (Feb 17, 2026)** — server.py **4703 → 632 lines** (**87% reduction**). Extracted routers: `auth`, `clients`, `admin`, `appointments`, `health_track`, `ops`, `telehealth`, `forms_protocols`, `compliance` under `/app/backend/routers/`. Shared `deps.py` holds mongo/api/helpers. Testing agent iteration 16 reports **207/208 backend tests green**.
 - **SDK abstraction layer** — ✅ **Phase 16 (Feb 17, 2026)** — `llm_client.py` (Anthropic direct → Emergent fallback), `notifiers.py` (SendGrid/Twilio real → sent_stub fallback). `/api/health` now returns `integrations` dict (`llm`, `email`, `sms`, `google_oauth_direct`). Direct Google OAuth wired via one-time handoff scheme (no JWTs in URL).

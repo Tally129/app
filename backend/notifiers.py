@@ -52,13 +52,25 @@ async def send_email(
     plain_text: Optional[str] = None,
     action: str = "email.generic",
     payload_metadata: Optional[dict] = None,
+    redact_recipient: bool = False,
 ) -> str:
-    """Send transactional email. Returns 'sent' | 'sent_stub' | 'failed'."""
+    """Send transactional email. Returns 'sent' | 'sent_stub' | 'failed'.
+
+    `redact_recipient=True` writes only a SHA-256 hash prefix + subject to the audit trail
+    (used for password-reset dispatch so the email address does not appear in integration_log).
+    The HTML body is never logged regardless.
+    """
+    import hashlib
     now = datetime.now(timezone.utc)
+
+    audit_to = to
+    if redact_recipient:
+        audit_to = "sha256:" + hashlib.sha256(to.lower().encode()).hexdigest()[:16]
+
     log_doc = {
         "service": "sendgrid",
         "action": action,
-        "payload": {"to": to, "subject": subject, **(payload_metadata or {})},
+        "payload": {"to": audit_to, "subject": subject, **(payload_metadata or {})},
         "ts": now,
     }
     if email_status() != "live":

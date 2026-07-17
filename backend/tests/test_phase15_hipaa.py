@@ -149,13 +149,14 @@ class TestPasswordPolicy:
                           json={"current_password": client_user["password"], "new_password": new_pw},
                           timeout=15)
         assert r.status_code == 200, f"expected 200, got {r.status_code} {r.text}"
-        # Revert so subsequent tests using client_user["password"] still work
-        # Need a fresh token (in case any refresh logic)
+        # Sprint 1: change-password revokes all sessions → need a fresh login.
         new_token = _login(client_user["email"], new_pw)
         r2 = requests.post(f"{API}/auth/change-password", headers=_headers(new_token),
                            json={"current_password": new_pw, "new_password": client_user["password"]},
                            timeout=15)
         assert r2.status_code == 200
+        # Refresh the shared fixture token so downstream tests keep working.
+        client_user["token"] = _login(client_user["email"], client_user["password"])
 
 
 # ---------- (C) Auditor RBAC ----------

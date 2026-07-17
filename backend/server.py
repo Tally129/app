@@ -405,6 +405,8 @@ async def hipaa_security_headers(request: Request, call_next):
 
 @app.on_event("startup")
 async def seed_demo():
+    # Sprint 1: In HIPAA_MODE=on, refuse to seed predictable staff credentials.
+    _hipaa = os.environ.get("HIPAA_MODE", "false").lower() in {"1", "true", "yes", "on"}
     try:
         await db.users.create_index("email", unique=True)
         await db.clients.create_index("user_id")
@@ -430,6 +432,12 @@ async def seed_demo():
     # Background tasks for push triggers
     _asyncio.create_task(_appointment_reminder_loop())
     _asyncio.create_task(_expiring_inventory_loop())
+
+    if _hipaa:
+        # HIPAA mode: refuse to seed predictable staff credentials. Migration script
+        # (scripts/sprint1_migration.py) also blocks startup when they persist.
+        logger.warning("HIPAA_MODE=on — skipping predictable-password demo seed.")
+        return
 
     if await db.users.count_documents({}) == 0:
         admin = {
