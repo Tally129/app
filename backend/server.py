@@ -500,6 +500,13 @@ async def _fan_out_supplements_for_note(note: dict, user: dict) -> list:
                 }
                 await db.client_supplement_assignments.insert_one(a)
                 matched.append({"sheet_id": s["id"], "sheet_title": title, "assignment_id": a["id"], "newly_assigned": True})
+                # Mirror to audit log so admins have a single trail regardless of source
+                try:
+                    await log_audit(db, user["id"], user["email"], "supplement_assignment.create",
+                                    resource_type="client", resource_id=note["client_id"],
+                                    metadata={"sheet_id": s["id"], "source": "auto_soap", "note_id": note["id"]})
+                except Exception:
+                    pass
                 # Push notification to the client portal user
                 try:
                     if c_user_id := (await db.clients.find_one({"id": note["client_id"]})).get("user_id"):

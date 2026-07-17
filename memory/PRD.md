@@ -108,10 +108,22 @@ JWT+RBAC+MFA+audit, intake, SOAP, GridFS files, appointments+availability, remin
 - **Last-login memory** — Login + StaffLogin pre-fill email from `localStorage.nms_last_login_email`, persisted on successful sign-in.
 - **`coturn` deployment doc** — `/app/COTURN_DEPLOYMENT.md` (8-section ops guide: provisioning → TLS → conf → backend env wire-up → verification → cost guidance).
 
+### Phase 14 — Auto-attach supplement directions on SOAP save (May 5, 2026) ⭐ NEW
+- When a clinician POSTs a SOAP note, the backend scans S/O/A/P free-text for case-insensitive substring matches against active `supplement_sheets` titles.
+- For each match:
+  - Idempotent: creates a `client_supplement_assignments` row (or bumps `last_referenced_at` + appends the note id to `note_ids[]`).
+  - Web-push notification fired to the patient portal user.
+  - Audit log row `supplement_assignment.create` (source='auto_soap' or 'manual').
+- New endpoints:
+  - `GET  /api/clients/{client_id}/supplement-assignments` (client RBAC: own only)
+  - `POST /api/clients/{client_id}/supplement-assignments` (admin/practitioner — manual override)
+  - `DELETE /api/clients/{client_id}/supplement-assignments/{assignment_id}` (soft delete)
+- Patient portal `/portal/patient/plan` now renders assigned supplement sheets above the existing treatment plans, with an "auto-attached" chip when `source='auto_soap'`.
+- Known-limitation flags for future work: substring match is fragile for short titles (< 4 char guard applied); title match sequential N+1 (fine at <200 sheets).
+
 ### Quality Gates
-- iter12: 12/12 backend pytest ✅ + 11/11 frontend UI ✅. Tester caught a `react-hooks/rules-of-hooks` regression in SendFormDialog (4-line refactor applied).
-- iter11: Logo + Protocol AI 13+10/13+10 ✅
-- iter10: SOAP + Protocols 22/22 ✅
+- iter13: 11/11 backend pytest ✅ + 4/4 frontend UI ✅
+- iter12: Document Library / Push / Recordings / Forms delivery — 12+11 ✅
 - HIPAA red banner permanent
 - RBAC verified across every endpoint
 - Audit logging on all mutations
@@ -155,4 +167,4 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 - Service worker registers only in production builds
 - `TEST123` is 7 chars — predates 8-char policy
 
-_Last updated: May 5, 2026 (Phase 13 — Document Library + Forms delivery + Recordings)_
+_Last updated: May 5, 2026 (Phase 14 — Auto-attach supplement directions)_
