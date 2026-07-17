@@ -43,7 +43,8 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str = Field(min_length=8)
+    # NIST validator (validate_password_strength) is the single source of truth; keep Pydantic lax so the clean 400 wins over 422.
+    password: str = Field(min_length=1)
 
 
 class UserOut(UserBase):
@@ -611,7 +612,8 @@ class ProfileUpdate(BaseModel):
 
 class PasswordChange(BaseModel):
     current_password: str
-    new_password: str = Field(min_length=8)
+    # NIST validator enforces ≥12 chars + name/common-password checks; keep Pydantic lax so users see the clean 400.
+    new_password: str = Field(min_length=1)
 
 
 # --------- Telehealth ---------

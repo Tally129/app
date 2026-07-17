@@ -117,7 +117,7 @@ export default function MyAccount() {
               />
             </div>
             <div>
-              <Label>New password (8+ chars)</Label>
+              <Label>New password (12+ chars, cannot contain your name/email, no common passwords)</Label>
               <Input
                 type="password"
                 className="mt-2 bg-[#f6f1e6] border-[#e0d6bc]"
@@ -155,7 +155,7 @@ export default function MyAccount() {
 }
 
 function MyDataExportCard() {
-  const { toast } = require("../../hooks/use-toast").useToast();
+  const { toast } = useToast();
   const [busy, setBusy] = React.useState(false);
   const [disclosuresBusy, setDisclosuresBusy] = React.useState(false);
   const downloadJson = async () => {
