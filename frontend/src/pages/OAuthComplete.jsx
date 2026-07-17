@@ -24,7 +24,7 @@ export default function OAuthComplete() {
     (async () => {
       try {
         const { data } = await api.post("/auth/google/oauth/exchange", { handoff_id: handoff });
-        const { user } = await completeOAuthFromTokens(data.access_token, data.refresh_token);
+        const { user } = await completeOAuthFromTokens(data.access_token, data.user);
         navigate(roleHome(user.role), { replace: true });
       } catch (e) {
         setError(e?.response?.data?.detail || e.message || "Sign-in failed");

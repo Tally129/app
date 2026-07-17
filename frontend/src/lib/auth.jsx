@@ -108,9 +108,16 @@ export function AuthProvider({ children }) {
     window.location.href = data.authorize_url;
   }
 
-  async function completeOAuthFromTokens(_access, _refresh) {
-    // Legacy signature — access token is now delivered via the /oauth/exchange path.
-    return {};
+  async function completeOAuthFromTokens(accessToken, user) {
+    // Sprint 2: refresh token is delivered via the `nms_rt` HttpOnly cookie
+    // by the /auth/google/oauth/exchange response. We only receive the
+    // memory-bound access token and the user profile here.
+    if (!accessToken || !user) throw new Error("OAuth exchange returned no token");
+    setAccessToken(accessToken);
+    localStorage.setItem(LS.user, JSON.stringify(user));
+    touchActivity();
+    setUser(user);
+    return { user };
   }
 
   return (

@@ -243,9 +243,9 @@ async def rotate_refresh(raw_token: str, ip: Optional[str],
             return RefreshOutcome("unknown")
 
         # Successor expires at the earliest of (now+TTL, session absolute expiry).
-        abs_exp = _as_utc(session["absolute_expires_at"])
+        abs_exp = _as_utc(session.get("absolute_expires_at"))
         soft_exp = ts + timedelta(days=REFRESH_TTL_DAYS)
-        expires_at = min(soft_exp, abs_exp)
+        expires_at = min(soft_exp, abs_exp) if abs_exp else soft_exp
 
         successor_raw = generate_opaque_refresh_token()
         successor_id = secrets.token_hex(16)
