@@ -101,9 +101,31 @@ export function AuthProvider({ children }) {
     return { user: data.user };
   }
 
+  // Direct Google OAuth (BAA-friendly). Redirects the browser to Google.
+  async function beginGoogleOAuthDirect() {
+    const { data } = await api.get("/auth/google/oauth/authorize");
+    window.location.href = data.authorize_url;
+  }
+
+  // Called from /oauth-complete route after Google → backend → frontend redirect.
+  async function completeOAuthFromTokens(accessToken, refreshToken) {
+    localStorage.setItem(LS.access, accessToken);
+    localStorage.setItem(LS.refresh, refreshToken);
+    const { data } = await api.get("/auth/me", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    localStorage.setItem(LS.user, JSON.stringify(data));
+    touchActivity();
+    setUser(data);
+    return { user: data };
+  }
+
   return (
     <AuthContext.Provider
-      value={{ user, loading, logout, loginWithPassword, registerNew, refreshMe, setUser, loginWithGoogleSession }}
+      value={{
+        user, loading, logout, loginWithPassword, registerNew, refreshMe, setUser,
+        loginWithGoogleSession, beginGoogleOAuthDirect, completeOAuthFromTokens,
+      }}
     >
       {children}
     </AuthContext.Provider>

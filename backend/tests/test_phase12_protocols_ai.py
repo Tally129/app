@@ -36,7 +36,7 @@ def tok_client():
     email = f"TEST_p12_{int(time.time())}@example.com"
     rr = requests.post(
         f"{BASE_URL}/api/auth/register",
-        json={"email": email, "password": "Pass!2345", "full_name": "TEST Phase12 Patient"},
+        json={"email": email, "password": "SafePass2026Long!", "full_name": "TEST Phase12 Q Q"},
         timeout=20,
     )
     assert rr.status_code in (200, 201), rr.text

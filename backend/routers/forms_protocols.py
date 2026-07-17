@@ -9,7 +9,8 @@ from __future__ import annotations
 import io
 import json
 import os
-from datetime import datetime, timezone
+import secrets as _secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -68,14 +69,8 @@ def _extract_text_from_upload(filename: str, data: bytes) -> str:
 
 
 async def _llm_form_transcribe(text: str, hint_category: Optional[str] = None) -> dict:
-    """Use Claude 4.5 to convert raw form text into our structured form schema."""
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="LLM key not configured")
-    try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"emergentintegrations unavailable: {e}")
+    """Use Claude to convert raw form text into our structured form schema."""
+    from llm_client import complete_text  # local import — deferred SDK load
 
     sys_msg = (
         "You are a healthcare-forms transcription assistant. Convert the supplied "
@@ -101,13 +96,13 @@ async def _llm_form_transcribe(text: str, hint_category: Optional[str] = None) -
     if hint_category:
         sys_msg += f"\nUser category hint: {hint_category}."
 
-    chat = LlmChat(
-        api_key=api_key,
-        session_id=f"form-transcribe-{new_id()[:8]}",
-        system_message=sys_msg,
-    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
-    user = UserMessage(text=f"Form source text:\n\n{text[:18000]}")
-    response = await chat.send_message(user)
+    try:
+        response = await complete_text(
+            sys_msg, f"Form source text:\n\n{text[:18000]}",
+            session_id=f"form-transcribe-{new_id()[:8]}",
+        )
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="LLM key not configured (set ANTHROPIC_API_KEY)")
 
     import re as _re
     m = _re.search(r"\{.*\}", response, _re.DOTALL)
@@ -298,6 +293,8 @@ async def send_form(payload: FormSendIn, request: Request,
     base_url = os.environ.get("PUBLIC_BASE_URL", "") or str(request.base_url).rstrip("/").replace("/api", "")
     submit_url = f"{base_url}/forms/respond/{token}"
 
+    from notifiers import send_email as notify_email, send_sms as notify_sms
+
     delivery_status = "skipped"
     target = payload.delivery_target
     if (payload.channel or "link") == "email" and not target:
@@ -306,19 +303,24 @@ async def send_form(payload: FormSendIn, request: Request,
         target = (client or {}).get("phone")
 
     if payload.channel == "email" and target:
-        await db.integration_log.insert_one({
-            "id": new_id(), "service": "sendgrid", "action": "form.email",
-            "payload": {"to": target, "subject": f"Please complete: {tpl.get('title','')}", "submission_id": doc["id"], "submit_url": submit_url},
-            "_stubbed": True, "ts": now,
-        })
-        delivery_status = "sent_stub"
+        html = (
+            f"<p>Hi{(' ' + (client.get('full_name') or '').split(' ')[0]) if client else ''},</p>"
+            f"<p>Please complete <strong>{tpl.get('title','')}</strong> using the secure link below:</p>"
+            f"<p><a href=\"{submit_url}\">{submit_url}</a></p>"
+            "<p>— Natural Medical Solutions</p>"
+        )
+        delivery_status = await notify_email(
+            db, target, f"Please complete: {tpl.get('title','')}", html,
+            action="form.email",
+            payload_metadata={"submission_id": doc["id"], "submit_url": submit_url},
+        )
     elif payload.channel == "sms" and target:
-        await db.integration_log.insert_one({
-            "id": new_id(), "service": "twilio", "action": "form.sms",
-            "payload": {"to": target, "body": f"{tpl.get('title','')} — please complete: {submit_url}", "submission_id": doc["id"]},
-            "_stubbed": True, "ts": now,
-        })
-        delivery_status = "sent_stub"
+        body = f"{tpl.get('title','')} — please complete: {submit_url}"
+        delivery_status = await notify_sms(
+            db, target, body,
+            action="form.sms",
+            payload_metadata={"submission_id": doc["id"]},
+        )
 
     await db.form_submissions.update_one({"id": doc["id"]}, {"$set": {"delivery_status": delivery_status, "delivery_target": target}})
     doc["delivery_status"] = delivery_status
@@ -592,14 +594,8 @@ async def delete_protocol_template(tpl_id: str, request: Request,
 
 
 async def _llm_protocol_transcribe(source_text: str, hint_title: Optional[str] = None) -> dict:
-    """Use Claude 4.5 to convert raw protocol text into our protocol template schema."""
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="LLM key not configured")
-    try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"emergentintegrations unavailable: {e}")
+    """Use Claude to convert raw protocol text into our protocol template schema."""
+    from llm_client import complete_text
 
     sys_msg = (
         "You convert wellness/detox/treatment protocol documents into a STRICT JSON object. "
@@ -624,12 +620,13 @@ async def _llm_protocol_transcribe(source_text: str, hint_title: Optional[str] =
         "Keep daily_outline concise — under 1500 chars."
     )
 
-    chat = LlmChat(
-        api_key=api_key,
-        session_id=f"protocol-transcribe-{new_id()[:8]}",
-        system_message=sys_msg,
-    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
-    response = await chat.send_message(UserMessage(text=f"Source:\n\n{source_text[:18000]}"))
+    try:
+        response = await complete_text(
+            sys_msg, f"Source:\n\n{source_text[:18000]}",
+            session_id=f"protocol-transcribe-{new_id()[:8]}",
+        )
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="LLM key not configured (set ANTHROPIC_API_KEY)")
 
     import re as _re
     m = _re.search(r"\{.*\}", response, _re.DOTALL)
@@ -702,14 +699,8 @@ async def generate_protocol(payload: FormGenerateIn,
 
 
 async def _llm_classify_document(text: str) -> dict:
-    """Use Claude 4.5 to detect what kind of clinical document the staff just dropped in."""
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="LLM key not configured")
-    try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"emergentintegrations unavailable: {e}")
+    """Use Claude to detect what kind of clinical document the staff just dropped in."""
+    from llm_client import complete_text
 
     sys_msg = (
         "You are a clinical-document triage assistant for a wellness clinic. "
@@ -730,12 +721,13 @@ async def _llm_classify_document(text: str) -> dict:
         "No markdown. JSON only."
     )
 
-    chat = LlmChat(
-        api_key=api_key,
-        session_id=f"doc-classify-{new_id()[:8]}",
-        system_message=sys_msg,
-    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
-    response = await chat.send_message(UserMessage(text=f"Document text:\n\n{text[:15000]}"))
+    try:
+        response = await complete_text(
+            sys_msg, f"Document text:\n\n{text[:15000]}",
+            session_id=f"doc-classify-{new_id()[:8]}",
+        )
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="LLM key not configured (set ANTHROPIC_API_KEY)")
 
     import re as _re
     m = _re.search(r"\{.*\}", response, _re.DOTALL)
@@ -799,17 +791,18 @@ async def library_classify_document(file: UploadFile = File(...),
 
 
 async def _llm_soap_template_extract(text: str, hint_title: Optional[str] = None) -> dict:
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="LLM key not configured")
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    from llm_client import complete_text
     sys_msg = (
         "Extract a SOAP note template from this document. Output STRICT JSON only:\n"
         "{ \"title\": \"...\", \"description\": \"...\", \"subjective\": \"...\", \"objective\": \"...\", \"assessment\": \"...\", \"plan\": \"...\", \"visit_type\": \"telehealth|in_person|null\" }"
     )
-    chat = LlmChat(api_key=api_key, session_id=f"soap-extract-{new_id()[:8]}", system_message=sys_msg)\
-        .with_model("anthropic", "claude-sonnet-4-5-20250929")
-    response = await chat.send_message(UserMessage(text=f"Source:\n\n{text[:14000]}"))
+    try:
+        response = await complete_text(
+            sys_msg, f"Source:\n\n{text[:14000]}",
+            session_id=f"soap-extract-{new_id()[:8]}",
+        )
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="LLM key not configured (set ANTHROPIC_API_KEY)")
     import re as _re
     m = _re.search(r"\{.*\}", response, _re.DOTALL)
     if not m:
@@ -830,17 +823,18 @@ async def _llm_soap_template_extract(text: str, hint_title: Optional[str] = None
 
 
 async def _llm_supplement_extract(text: str, hint_title: Optional[str] = None) -> dict:
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="LLM key not configured")
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    from llm_client import complete_text
     sys_msg = (
         "Extract a supplement directions sheet. Output STRICT JSON only:\n"
         "{ \"title\": \"...\", \"summary\": \"...\", \"items\": [{\"name\":\"...\",\"dose\":\"...\",\"frequency\":\"...\",\"timing\":\"...\",\"notes\":\"...\"}] }"
     )
-    chat = LlmChat(api_key=api_key, session_id=f"supp-extract-{new_id()[:8]}", system_message=sys_msg)\
-        .with_model("anthropic", "claude-sonnet-4-5-20250929")
-    response = await chat.send_message(UserMessage(text=f"Source:\n\n{text[:14000]}"))
+    try:
+        response = await complete_text(
+            sys_msg, f"Source:\n\n{text[:14000]}",
+            session_id=f"supp-extract-{new_id()[:8]}",
+        )
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="LLM key not configured (set ANTHROPIC_API_KEY)")
     import re as _re
     m = _re.search(r"\{.*\}", response, _re.DOTALL)
     if not m:

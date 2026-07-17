@@ -537,11 +537,8 @@ async def llm_soap_draft(appt_id: str, user=Depends(require_roles("practitioner"
         f"[{m.get('from_role','?')}] {m.get('body','')}" for m in msgs
     )[:6000]
 
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="LLM key not configured")
+    from llm_client import complete_text, DEFAULT_ANTHROPIC_MODEL, provider
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
         sys_msg = (
             "You are a clinical-documentation assistant helping a wellness practitioner "
             "draft a SOAP note from a telehealth visit. Output STRICT JSON with keys "
@@ -579,12 +576,10 @@ In-call chat transcript:
 {transcript or '(no chat messages were exchanged)'}
 
 Produce a SOAP draft as STRICT JSON only — no commentary."""
-        chat = LlmChat(
-            api_key=api_key,
-            session_id=f"soap-{appt_id}",
-            system_message=sys_msg,
-        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
-        response = await chat.send_message(UserMessage(text=prompt))
+        try:
+            response = await complete_text(sys_msg, prompt, session_id=f"soap-{appt_id}")
+        except RuntimeError:
+            raise HTTPException(status_code=503, detail="LLM key not configured (set ANTHROPIC_API_KEY)")
         # Robust JSON extraction
         import json as _json
         import re as _re
@@ -596,8 +591,11 @@ Produce a SOAP draft as STRICT JSON only — no commentary."""
             "assessment": data.get("assessment", "")[:4000],
             "plan": data.get("plan", "")[:4000],
             "source": "llm",
-            "model": "claude-sonnet-4-5-20250929",
+            "model": DEFAULT_ANTHROPIC_MODEL,
+            "provider": provider(),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning("LLM SOAP draft failed: %s", e)
         raise HTTPException(status_code=502, detail=f"LLM error: {e}")

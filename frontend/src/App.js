@@ -50,6 +50,7 @@ import Analytics from "./pages/portal/Analytics";
 import AppointmentsEHR from "./pages/provider/AppointmentsEHR";
 import TelehealthHub from "./pages/portal/TelehealthHub";
 import StaffLogin from "./pages/StaffLogin";
+import OAuthComplete from "./pages/OAuthComplete";
 import StaffDashboard from "./pages/staff/StaffDashboard";
 import { Toaster } from "./components/ui/toaster";
 import { AuthProvider } from "./lib/auth";
@@ -69,6 +70,7 @@ function App() {
             <Route path="/signup" element={<Signup />} />
             <Route path="/login" element={<Login />} />
             <Route path="/staff-login" element={<StaffLogin />} />
+            <Route path="/oauth-complete" element={<OAuthComplete />} />
 
             {/* Portal redirect */}
             <Route path="/portal" element={<PortalIndex />} />

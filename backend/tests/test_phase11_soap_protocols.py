@@ -45,12 +45,12 @@ def client_ctx(admin_token):
     """Create a brand-new client (user + linked client record) for protocol tests."""
     ts = int(time.time())
     email = f"TEST_phase11_{ts}@example.com"
-    password = "TestClient!2345"
+    password = "SafePass2026Long!"
     # Register as client
     r = requests.post(f"{API}/auth/register", json={
         "email": email,
         "password": password,
-        "full_name": "TEST P11 Client",
+        "full_name": "Q Q",
         "role": "client",
     }, timeout=15)
     assert r.status_code in (200, 201), r.text[:300]

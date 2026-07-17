@@ -58,6 +58,24 @@ export default function Login() {
     window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirect)}`;
   };
 
+  // If backend has direct Google OAuth wired (client_id/secret env vars set), use that instead.
+  const [googleDirectOn, setGoogleDirectOn] = React.useState(false);
+  React.useEffect(() => {
+    import("../lib/api").then(({ api }) =>
+      api.get("/health")
+        .then((r) => setGoogleDirectOn(Boolean(r.data?.integrations?.google_oauth_direct)))
+        .catch(() => setGoogleDirectOn(false)),
+    );
+  }, []);
+  const { beginGoogleOAuthDirect } = useAuth();
+  const googleSignInDirect = async () => {
+    try {
+      await beginGoogleOAuthDirect();
+    } catch (e) {
+      toast({ title: "Google sign-in unavailable", description: e?.response?.data?.detail || e.message });
+    }
+  };
+
   // Handle Google callback: parse #session_id=... from the URL fragment, exchange for our JWT
   const { loginWithGoogleSession } = useAuth();
   React.useEffect(() => {
@@ -101,7 +119,8 @@ export default function Login() {
         <div className="rounded-3xl border border-[#e7dfc9] bg-[#fbf7ee] p-8">
           <Button
             type="button"
-            onClick={googleSignIn}
+            data-testid="google-sso-button"
+            onClick={googleDirectOn ? googleSignInDirect : googleSignIn}
             variant="outline"
             className="btn-lift h-11 w-full rounded-full border-[#e0d6bc] bg-[#fbf7ee] text-[#3a3a3a] hover:bg-[#f1ead8]"
           >

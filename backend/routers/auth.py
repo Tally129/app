@@ -6,9 +6,13 @@ All routes still register on the shared `deps.api` APIRouter (`/api` prefix).
 """
 from datetime import datetime, timezone
 from typing import Optional
+import os
+import secrets
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 
 from audit import get_client_ip, log_audit
 from auth_utils import (
@@ -276,3 +280,149 @@ async def google_session_exchange(request: Request):
             "picture_url": user.get("picture_url"),
         },
     }
+
+
+# --------------------------------------------------------------------------- #
+# Direct Google OAuth (replaces Emergent-managed SSO once env vars are set)  #
+#                                                                             #
+# REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS.   #
+# This breaks the auth. All URLs come from env only:                          #
+#   GOOGLE_OAUTH_CLIENT_ID                                                    #
+#   GOOGLE_OAUTH_CLIENT_SECRET                                                #
+#   GOOGLE_OAUTH_REDIRECT_URI  (e.g. https://your.app/api/auth/google/callback)#
+#   FRONTEND_ORIGIN            (where to bounce the user after callback)     #
+# --------------------------------------------------------------------------- #
+
+_GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+_GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
+
+
+def _google_oauth_configured() -> bool:
+    return bool(
+        os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
+        and os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")
+        and os.environ.get("GOOGLE_OAUTH_REDIRECT_URI")
+    )
+
+
+@api.get("/auth/google/oauth/authorize")
+async def google_oauth_authorize():
+    """Return the Google authorize URL the frontend should redirect the browser to.
+    A one-time `state` value is generated and stored briefly in Mongo for CSRF protection."""
+    if not _google_oauth_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Direct Google OAuth not configured. Set GOOGLE_OAUTH_CLIENT_ID / "
+                   "GOOGLE_OAUTH_CLIENT_SECRET / GOOGLE_OAUTH_REDIRECT_URI in backend/.env.",
+        )
+    state = secrets.token_urlsafe(32)
+    await db.oauth_states.insert_one({
+        "state": state,
+        "created_at": datetime.now(timezone.utc),
+    })
+    params = {
+        "client_id": os.environ["GOOGLE_OAUTH_CLIENT_ID"],
+        "redirect_uri": os.environ["GOOGLE_OAUTH_REDIRECT_URI"],
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "offline",
+        "prompt": "select_account",
+        "state": state,
+    }
+    return {"authorize_url": f"{_GOOGLE_AUTH_URL}?{urlencode(params)}", "state": state}
+
+
+@api.get("/auth/google/oauth/callback")
+async def google_oauth_callback(request: Request, code: Optional[str] = None,
+                                state: Optional[str] = None, error: Optional[str] = None):
+    """Handle Google's redirect: exchange code for token, upsert the user, then
+    bounce the browser to `${FRONTEND_ORIGIN}/oauth-complete?token=<jwt>&refresh=<jwt>`."""
+    if not _google_oauth_configured():
+        raise HTTPException(status_code=503, detail="Direct Google OAuth not configured")
+    if error:
+        raise HTTPException(status_code=400, detail=f"Google returned error: {error}")
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+
+    st = await db.oauth_states.find_one_and_delete({"state": state})
+    if not st:
+        raise HTTPException(status_code=400, detail="Invalid or expired state")
+
+    # Exchange code for tokens
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            token_resp = await client.post(_GOOGLE_TOKEN_URL, data={
+                "code": code,
+                "client_id": os.environ["GOOGLE_OAUTH_CLIENT_ID"],
+                "client_secret": os.environ["GOOGLE_OAUTH_CLIENT_SECRET"],
+                "redirect_uri": os.environ["GOOGLE_OAUTH_REDIRECT_URI"],
+                "grant_type": "authorization_code",
+            })
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Google token endpoint unreachable: {e}")
+
+    if token_resp.status_code != 200:
+        raise HTTPException(status_code=401, detail=f"Token exchange failed: {token_resp.text}")
+    tok = token_resp.json()
+    access_google = tok.get("access_token")
+    if not access_google:
+        raise HTTPException(status_code=401, detail="No access token from Google")
+
+    # Fetch userinfo
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        ui_resp = await client.get(_GOOGLE_USERINFO_URL,
+                                    headers={"Authorization": f"Bearer {access_google}"})
+    if ui_resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Failed to fetch Google userinfo")
+    ui = ui_resp.json()
+    email = (ui.get("email") or "").lower().strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="Google returned no email")
+    if not ui.get("email_verified", True):
+        raise HTTPException(status_code=403, detail="Email not verified with Google")
+
+    # Upsert user + client
+    user = await db.users.find_one({"email": email})
+    if not user:
+        user = {
+            "id": new_id(),
+            "email": email,
+            "full_name": ui.get("name") or email.split("@")[0],
+            "role": "client",
+            "is_active": True,
+            "auth_provider": "google_direct",
+            "picture_url": ui.get("picture"),
+            "created_at": datetime.now(timezone.utc),
+        }
+        await db.users.insert_one(user)
+        await db.clients.insert_one({
+            "id": new_id(), "user_id": user["id"],
+            "full_name": user["full_name"], "email": email,
+            "intake_completed": False,
+            "created_at": datetime.now(timezone.utc),
+        })
+    elif not user.get("is_active", True):
+        raise HTTPException(status_code=403, detail="Account disabled")
+    else:
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {
+                "auth_provider": "google_direct",
+                "picture_url": ui.get("picture"),
+                "last_login_at": datetime.now(timezone.utc),
+            }},
+        )
+
+    access = make_access_token(user["id"], user["role"])
+    refresh = make_refresh_token(user["id"])
+    await log_audit(db, user["id"], user["email"], "auth.login_google_direct",
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+
+    frontend_origin = os.environ.get("FRONTEND_ORIGIN")
+    if not frontend_origin:
+        # Deliberately no fallback — the redirect target must come from env only.
+        raise HTTPException(status_code=500,
+                            detail="FRONTEND_ORIGIN env var required for OAuth completion redirect")
+    complete_url = f"{frontend_origin.rstrip('/')}/oauth-complete?access={access}&refresh={refresh}"
+    return RedirectResponse(url=complete_url, status_code=302)

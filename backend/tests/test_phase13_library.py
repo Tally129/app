@@ -57,7 +57,7 @@ def client_tok():
     # create ephemeral patient
     email = f"TEST_p13_{uuid.uuid4().hex[:8]}@example.com"
     r = requests.post(f"{API}/auth/register", json={
-        "email": email, "password": "TestPass!1", "full_name": "Phase13 TestPatient"
+        "email": email, "password": "SafePass2026Long!", "full_name": "Qz"
     }, timeout=20)
     assert r.status_code in (200, 201), r.text
     tok = r.json().get("access_token") or r.json().get("token")

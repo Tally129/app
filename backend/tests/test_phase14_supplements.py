@@ -43,9 +43,9 @@ def patient(pract_tok):
     """Register a fresh patient + ensure /clients row is linked via user_id."""
     nonce = uuid.uuid4().hex[:8]
     email = f"TEST_p14_{nonce}@example.com"
-    pwd = "Patient!2345"
+    pwd = "SafePass2026Long!"
     rr = requests.post(f"{API}/auth/register", json={
-        "email": email, "password": pwd, "full_name": f"TEST p14 Patient {nonce}", "phone": "+15551110000",
+        "email": email, "password": pwd, "full_name": f"Q Q {nonce}", "phone": "+15551110000",
     }, timeout=20)
     assert rr.status_code == 200, rr.text
     pat_tok = rr.json()["access_token"]
@@ -62,7 +62,7 @@ def other_patient():
     nonce = uuid.uuid4().hex[:8]
     email = f"TEST_p14b_{nonce}@example.com"
     rr = requests.post(f"{API}/auth/register", json={
-        "email": email, "password": "Patient!2345", "full_name": f"TEST p14b {nonce}", "phone": "+15551110001",
+        "email": email, "password": "SafePass2026Long!", "full_name": f"Qq {nonce}", "phone": "+15551110001",
     }, timeout=20)
     assert rr.status_code == 200, rr.text
     tok = rr.json()["access_token"]
