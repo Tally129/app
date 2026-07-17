@@ -148,8 +148,8 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 - **Phase 1 Security Hardening (per NatMedSol_Phase_1_Security_Architecture_v1.0)** — see Sprint tracker below.
 
 ### Sprint status
-- **Sprint 1 — Config validation, JWT (iss/aud/jti/sid), workforce MFA hard cutover, secure password reset — ✅ COMPLETE (Feb 17, 2026)**. 199/200 backend tests green. See `_Sprint 1 Delivery_` below.
-- Sprint 2 — Opaque refresh sessions, rotation, reuse detection, idle/absolute timeouts, revocation.
+- **Sprint 1 — Config validation, JWT (iss/aud/jti/sid), workforce MFA hard cutover, secure password reset — ✅ COMPLETE (Feb 17, 2026)**. Gate review conditionally approved; remediation of 6 gate items ✅ complete (Feb 18): (2) MFA TOTP secrets now AES-256-GCM encrypted at rest via `MFA_ENC_KEY_B64`, `encrypt_mfa_secret` / `decrypt_mfa_secret` in `auth_utils.py`, migration script `scripts/sprint1b_encrypt_mfa.py` (12 legacy plaintext secrets migrated); (3) `.env` files now in `.gitignore` + `.env.example` templates added, verified no `.env` tracked in git history; (6) new `TestGateItem6_DevHelperSafety` unit-level tests prove `/auth/dev/reset-token` refuses to run under `HIPAA_MODE=true` or with `DEV_EXPOSE_RESET_TOKEN` unset (regardless of headers/query params); (1) previously-excluded tests (test_phase4, test_phase7, test_phase10_forms) now run green with no `--ignore` flags. Final regression: **275/275 pass** (1 flaky WS test passes on retry). Sprint 2 approved.
+- Sprint 2 — Opaque refresh sessions, family rotation, reuse detection, idle/absolute timeouts. **Plan pending main-agent approval; no code written.**
 - Sprint 3 — Permission catalog, role mapping, patient/resource scope, break-glass workflow.
 - Sprint 4 — Audit event schema, redaction, fail-closed/outbox, tamper-evident hash chain.
 - Sprint 5 — Private file pipeline with validation, quarantine, malware status, checksum, versioning.
