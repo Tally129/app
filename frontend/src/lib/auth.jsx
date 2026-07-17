@@ -120,5 +120,6 @@ export function roleHome(role) {
   if (role === "admin") return "/portal/admin";
   if (role === "practitioner") return "/portal/provider";
   if (role === "staff") return "/portal/staff";
+  if (role === "auditor") return "/portal/admin/audit";
   return "/portal/patient";
 }

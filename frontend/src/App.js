@@ -35,6 +35,8 @@ import Protocols from "./pages/portal/Protocols";
 import PatientProtocols from "./pages/patient/PatientProtocols";
 import DocumentLibrary from "./pages/admin/DocumentLibrary";
 import PushOptInBanner from "./components/PushOptInBanner";
+import SessionTimeout from "./components/SessionTimeout";
+import AdminCompliance from "./pages/admin/AdminCompliance";
 import TelehealthVisit from "./pages/TelehealthVisit";
 import MyAccount from "./pages/portal/MyAccount";
 import FrontDesk from "./pages/portal/FrontDesk";
@@ -59,6 +61,7 @@ function App() {
       <BrowserRouter>
         <AuthProvider>
           <PushOptInBanner />
+          <SessionTimeout />
           <Routes>
             {/* Public marketing */}
             <Route path="/" element={<Home />} />
@@ -157,6 +160,7 @@ function App() {
             <Route path="/portal/admin/library" element={<Protected roles={["admin", "practitioner", "staff"]}><DocumentLibrary /></Protected>} />
             <Route path="/portal/staff/library" element={<Protected roles={["admin", "practitioner", "staff"]}><DocumentLibrary /></Protected>} />
             <Route path="/portal/provider/library" element={<Protected roles={["admin", "practitioner", "staff"]}><DocumentLibrary /></Protected>} />
+            <Route path="/portal/admin/compliance" element={<Protected roles={["admin"]}><AdminCompliance /></Protected>} />
             <Route path="/portal/provider/analytics" element={<Protected roles={["practitioner", "admin"]}><Analytics /></Protected>} />
 
             {/* Public form responder (token-based, no login required) */}

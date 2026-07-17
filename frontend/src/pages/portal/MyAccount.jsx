@@ -6,7 +6,7 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { useToast } from "../../hooks/use-toast";
-import { Save, KeyRound } from "lucide-react";
+import { Save, KeyRound, Download, ShieldCheck } from "lucide-react";
 
 export default function MyAccount() {
   const { user, refreshMe } = useAuth();
@@ -148,6 +148,60 @@ export default function MyAccount() {
           </div>
         </div>
       </div>
+
+      {user?.role === "client" && <MyDataExportCard />}
     </PortalLayout>
+  );
+}
+
+function MyDataExportCard() {
+  const { toast } = require("../../hooks/use-toast").useToast();
+  const [busy, setBusy] = React.useState(false);
+  const [disclosuresBusy, setDisclosuresBusy] = React.useState(false);
+  const downloadJson = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post("/patient/data-export");
+      const blob = new Blob([JSON.stringify(r.data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `natmedsol-my-record-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Downloaded", description: "Under HIPAA §164.524 you have the right to a copy of your record." });
+    } catch (e) { toast({ title: "Export failed", description: e?.response?.data?.detail || "" }); }
+    finally { setBusy(false); }
+  };
+  const downloadDisclosures = async () => {
+    setDisclosuresBusy(true);
+    try {
+      const me = await api.get("/clients/me");
+      if (!me.data?.id) throw new Error("no client record");
+      const r = await api.get(`/clients/${me.data.id}/disclosures`);
+      const blob = new Blob([JSON.stringify(r.data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `natmedsol-disclosures-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Downloaded", description: "Accounting of disclosures under HIPAA §164.528." });
+    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    finally { setDisclosuresBusy(false); }
+  };
+  return (
+    <div className="mt-8 rounded-2xl border border-[#e7dfc9] bg-[#fbf7ee] p-6" data-testid="my-data-export-card">
+      <h2 className="font-display text-2xl text-[#1f2a22] inline-flex items-center gap-2"><ShieldCheck size={18} className="text-[#2f4a3a]" /> My data &amp; privacy</h2>
+      <p className="text-sm text-[#5a5a5a] mt-1">Exercise your HIPAA rights — download a copy of everything we store about you, or see who has accessed your record.</p>
+      <div className="mt-4 flex flex-wrap gap-3">
+        <Button onClick={downloadJson} disabled={busy} className="rounded-full bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6]" data-testid="my-data-download-btn">
+          <Download size={14} className="mr-2" /> {busy ? "Preparing…" : "Download my record (JSON)"}
+        </Button>
+        <Button onClick={downloadDisclosures} disabled={disclosuresBusy} variant="outline" className="rounded-full border-[#c19a4b] text-[#8a6a3c]" data-testid="my-disclosures-btn">
+          <Download size={14} className="mr-2" /> {disclosuresBusy ? "Preparing…" : "Accounting of disclosures"}
+        </Button>
+      </div>
+    </div>
   );
 }
