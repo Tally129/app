@@ -108,6 +108,8 @@ async def breakglass_activate(payload: BreakGlassActivateIn, request: Request,
 async def breakglass_active(user=Depends(require_workforce_mfa)):
     """Return *your* active break-glass sessions. Frontend uses this for the
     visible active-session indicator."""
+    if user.get("role") not in WORKFORCE_ROLES:
+        raise HTTPException(status_code=403, detail="Workforce accounts only")
     now = datetime.now(timezone.utc)
     rows = await db.breakglass_sessions.find({
         "user_id": user["id"],
@@ -125,6 +127,8 @@ async def breakglass_active(user=Depends(require_workforce_mfa)):
 @api.post("/breakglass/{bg_id}/revoke")
 async def breakglass_revoke(bg_id: str, request: Request,
                             user=Depends(require_workforce_mfa)):
+    if user.get("role") not in WORKFORCE_ROLES:
+        raise HTTPException(status_code=403, detail="Workforce accounts only")
     row = await db.breakglass_sessions.find_one({"id": bg_id})
     if not row:
         raise HTTPException(status_code=404, detail="Not found")

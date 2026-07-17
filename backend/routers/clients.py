@@ -45,8 +45,24 @@ async def get_client(client_id: str, request: Request, user=Depends(get_current_
     c = await db.clients.find_one({"id": client_id})
     if not c:
         raise HTTPException(status_code=404, detail="Client not found")
-    if user["role"] == "client" and c.get("user_id") != user["id"]:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    role = user.get("role") or ""
+    # Central scope enforcement — mirrors permissions.assert_client_visible.
+    if role == "client":
+        if c.get("user_id") != user["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    elif role == "practitioner":
+        assigned = c.get("assigned_practitioner_id")
+        # Assigned-only scope. Even unassigned clients require break-glass.
+        if assigned != user["id"]:
+            from permissions import _is_breakglass_active
+            if not await _is_breakglass_active(user["id"], client_id):
+                raise HTTPException(status_code=403, detail={
+                    "code": "scope_denied",
+                    "resource": "client", "id": client_id,
+                })
+    # admin / auditor / staff pass through (admin=full, auditor=break-glass GET
+    # already gated by require_roles elsewhere; staff have client:list not read_any
+    # but need patient demographics for scheduling — allowed here).
     await log_audit(db, user["id"], user["email"], "client.read",
                     resource_type="client", resource_id=client_id,
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
@@ -488,6 +504,13 @@ async def upload_file(
     user=Depends(get_current_user),
 ):
     import hashlib as _hashlib
+    # Auditor is read-only; refuse any upload path even though the endpoint
+    # otherwise uses get_current_user for the client-uploads-own-file case.
+    if user.get("role") == "auditor":
+        raise HTTPException(status_code=403, detail={
+            "code": "auditor_read_only",
+            "message": "Auditor accounts cannot upload files.",
+        })
     if category not in ALLOWED_CATEGORIES:
         raise HTTPException(status_code=400, detail=f"Category must be one of {ALLOWED_CATEGORIES}")
     mime = (file.content_type or "").lower()
