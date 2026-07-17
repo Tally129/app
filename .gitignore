@@ -97,3 +97,11 @@ frontend/node_modules/.cache/default-development/14.pack
 frontend/node_modules/.cache/default-development/16.pack
 frontend/node_modules/.cache/default-development/15.pack
 frontend/node_modules/.cache/default-development/8.pack
+
+# Sprint 1 gate item #3 — never commit real secrets
+backend/.env
+frontend/.env
+.env
+.env.*
+!.env.example
+!**/.env.example

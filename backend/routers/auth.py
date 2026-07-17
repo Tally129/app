@@ -233,9 +233,14 @@ async def me(user=Depends(get_authenticated_user)):
 # --------------------------------------------------------------------------- #
 @api.post("/auth/mfa/setup")
 async def mfa_setup(user=Depends(get_authenticated_user)):
+    from auth_utils import encrypt_mfa_secret
     secret = generate_mfa_secret()
     uri = mfa_provisioning_uri(secret, user["email"])
-    await db.users.update_one({"id": user["id"]}, {"$set": {"mfa_secret": secret, "mfa_enabled": False}})
+    # Store the AES-256-GCM ciphertext — plaintext leaves memory once the response is sent.
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"mfa_secret": encrypt_mfa_secret(secret), "mfa_enabled": False}},
+    )
     return {"secret": secret, "provisioning_uri": uri}
 
 

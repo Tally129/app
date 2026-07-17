@@ -37,12 +37,14 @@ FIXTURE_TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 
 @pytest.fixture(scope="session", autouse=True)
 def _enroll_workforce_mfa_and_patch_login():
+    from auth_utils import encrypt_mfa_secret  # noqa: WPS433 — deferred import
+
     c = pymongo.MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
     dbh = c[os.environ.get("DB_NAME", "test_database")]
-    # 1) Enrol MFA on seeded workforce accounts (idempotent).
+    # 1) Enrol MFA on seeded workforce accounts (idempotent). Store as ciphertext.
     dbh.users.update_many(
         {"email": {"$in": list(SEEDED_WORKFORCE)}},
-        {"$set": {"mfa_enabled": True, "mfa_secret": FIXTURE_TOTP_SECRET}},
+        {"$set": {"mfa_enabled": True, "mfa_secret": encrypt_mfa_secret(FIXTURE_TOTP_SECRET)}},
     )
     c.close()
 

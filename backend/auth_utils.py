@@ -6,7 +6,11 @@ Sprint 1 changes:
 - `decode_token()` enforces `iss`, `aud`, and token type in addition to signature + expiry.
 - `assert_valid_secret()` validates JWT_SECRET entropy (Shannon > 3.5 bits/char AND ≥ 32 chars).
 - No default `JWT_SECRET` in HIPAA mode — startup fails hard if unset (see deps.py).
+- MFA TOTP secrets are AES-256-GCM encrypted at rest via `encrypt_mfa_secret` /
+  `decrypt_mfa_secret`. Encryption key comes from `MFA_ENC_KEY_B64` env var
+  (32 random bytes, base64-url), never from Mongo.
 """
+import base64
 import math
 import os
 import uuid
@@ -17,6 +21,7 @@ from typing import Optional
 import bcrypt
 import jwt
 import pyotp
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import HTTPException
 
 JWT_ALGO = "HS256"
@@ -200,6 +205,56 @@ def decode_token(token: str, expected_type: Optional[str] = None) -> dict:
 # --------------------------------------------------------------------------- #
 # MFA                                                                          #
 # --------------------------------------------------------------------------- #
+_MFA_CT_PREFIX = "enc-v1:"  # marks AES-GCM ciphertext so we can support in-flight migration
+
+
+def _mfa_key() -> bytes:
+    """Load and validate the MFA encryption key (32 bytes, base64-url).
+    In HIPAA mode: required. In dev: falls back to a deterministic key so
+    existing tests keep working when the env var is unset."""
+    v = os.environ.get("MFA_ENC_KEY_B64", "")
+    if v:
+        try:
+            key = base64.urlsafe_b64decode(v + "=" * (-len(v) % 4))
+        except Exception as e:
+            raise RuntimeError(f"MFA_ENC_KEY_B64 is not valid base64: {e}")
+        if len(key) != 32:
+            raise RuntimeError(f"MFA_ENC_KEY_B64 must decode to exactly 32 bytes (got {len(key)}).")
+        return key
+    if _hipaa_mode():
+        raise RuntimeError("HIPAA_MODE=on: MFA_ENC_KEY_B64 is required (32 random bytes, base64).")
+    # Deterministic dev key — NEVER used when HIPAA_MODE=on.
+    return b"dev-mfa-key-DO-NOT-USE-IN-PROD!!"
+
+
+def encrypt_mfa_secret(plaintext: str) -> str:
+    """AES-256-GCM encrypt a TOTP secret. Returns 'enc-v1:<base64-nonce||ct||tag>'."""
+    if not plaintext:
+        return ""
+    key = _mfa_key()
+    nonce = os.urandom(12)  # 96-bit GCM nonce
+    ct = AESGCM(key).encrypt(nonce, plaintext.encode("utf-8"), associated_data=b"mfa_secret")
+    blob = base64.urlsafe_b64encode(nonce + ct).decode("ascii")
+    return _MFA_CT_PREFIX + blob
+
+
+def decrypt_mfa_secret(stored: str) -> str:
+    """Reverse of `encrypt_mfa_secret`. Also transparently returns plaintext when
+    the value predates the encrypted-at-rest migration (i.e. lacks the prefix)."""
+    if not stored:
+        return ""
+    if not stored.startswith(_MFA_CT_PREFIX):
+        # Legacy plaintext — will be re-encrypted by migration script on next boot.
+        return stored
+    blob = stored[len(_MFA_CT_PREFIX):]
+    raw = base64.urlsafe_b64decode(blob + "=" * (-len(blob) % 4))
+    if len(raw) < 13:
+        raise RuntimeError("MFA ciphertext too short")
+    nonce, ct = raw[:12], raw[12:]
+    pt = AESGCM(_mfa_key()).decrypt(nonce, ct, associated_data=b"mfa_secret")
+    return pt.decode("utf-8")
+
+
 def generate_mfa_secret() -> str:
     return pyotp.random_base32()
 
@@ -208,10 +263,12 @@ def mfa_provisioning_uri(secret: str, email: str, issuer: str = "NatMedSol") -> 
     return pyotp.TOTP(secret).provisioning_uri(name=email, issuer_name=issuer)
 
 
-def verify_mfa(secret: str, token: str) -> bool:
-    if not secret or not token:
+def verify_mfa(secret_stored: str, token: str) -> bool:
+    """`secret_stored` may be ciphertext (Sprint 1b) or legacy plaintext."""
+    if not secret_stored or not token:
         return False
     try:
-        return pyotp.TOTP(secret).verify(token, valid_window=1)
+        plaintext = decrypt_mfa_secret(secret_stored)
+        return pyotp.TOTP(plaintext).verify(token, valid_window=1)
     except Exception:
         return False

@@ -90,8 +90,8 @@ class TestAuthAndAccount:
         hash directly so that documented credentials keep working."""
         import os as _os
         from pymongo import MongoClient
-        from backend.auth_utils import hash_password as _hash
-        new_pwd = "TempPass!2345"
+        from auth_utils import hash_password as _hash
+        new_pwd = "TempSafePass2026Long!"
         mc = MongoClient(_os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
         db = mc[_os.environ.get("DB_NAME", "test_database")]
         original_hash = db.users.find_one({"email": ADMIN["email"]})["password_hash"]
@@ -107,8 +107,14 @@ class TestAuthAndAccount:
             # Restore original hash so TEST123 keeps working
             db.users.update_one({"email": ADMIN["email"]},
                                 {"$set": {"password_hash": original_hash}})
+            mc.close()
         r = requests.post(f"{API}/auth/login", json=ADMIN, timeout=15)
         assert r.status_code == 200, "Failed to restore TEST123 login"
+        # Sprint 1: change-password revoked our session-scoped admin token.
+        # Refresh it for downstream tests in this file.
+        j = r.json()
+        # Overwrite the shared fixture value so other tests keep working
+        admin_headers["Authorization"] = f"Bearer {j['access_token']}"
 
 
 # -------- Treatments --------

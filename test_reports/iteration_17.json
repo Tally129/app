@@ -1,0 +1,80 @@
+{
+  "summary": "Sprint 1 GATE REMEDIATION verification — items #2 (MFA at-rest encryption) and #6 (dev-helper safety) both PASS as real bug fixes. Full pytest regression: 274 passed / 2 skipped / 1 failed / 0 errors (test_phase10_forms.py::test_forms_templates_list_seeded — pre-existing seed-state bug unrelated to Sprint 1 items, main agent's claim of 275/0/0 is off by one).",
+  "gate_items_verified": {
+    "item_2_mfa_at_rest_encryption": {
+      "status": "PASS",
+      "evidence": [
+        "a) POST /api/auth/mfa/setup: response.secret is raw base32, Mongo doc.mfa_secret is 'enc-v1:<87 chars>' — verified via TestGateItem2::test_mfa_secret_stored_as_ciphertext_not_plaintext.",
+        "b) POST /api/auth/mfa/verify with the raw base32 secret succeeds — verified in same test (verify returns 200 and unlocks /api/clients).",
+        "c) encrypt_mfa_secret is non-deterministic — encrypt(pt) called twice yields two different ciphertexts, both decrypt back to pt. Verified via TestGateItem2::test_encrypt_decrypt_roundtrip.",
+        "d) sprint1b_encrypt_mfa.py is idempotent — 1st re-run: 'Scanned 16 accounts; encrypted 0'; 2nd re-run identical. No double-encryption.",
+        "e) Zero plaintext TOTP secrets remain: pymongo scan of users.mfa_secret shows 16/16 rows with 'enc-v1:' prefix, 0 legacy plaintext. (16 = 12 originally migrated + 4 fresh accounts enrolled by the current test run.)"
+      ]
+    },
+    "item_6_dev_helper_safety": {
+      "status": "PASS",
+      "evidence": [
+        "a) Current dev env (HIPAA_MODE=false, DEV_EXPOSE_RESET_TOKEN=1): POST /api/auth/dev/reset-token returns 200 + {dev_reset_token, expires_in_min:30}. Verified via curl and TestPasswordReset flow.",
+        "b) When DEV_EXPOSE_RESET_TOKEN unset OR HIPAA_MODE=true: endpoint raises HTTPException(404, 'Not available') BEFORE any DB lookup. Verified via TestGateItem6::test_returns_404_when_env_flag_missing and ::test_returns_404_when_hipaa_mode_on (monkeypatch + importlib.reload to force env re-read).",
+        "c) Code inspection of /app/backend/routers/auth.py line 482 confirms the gate is `if _hipaa_mode() or os.environ.get('DEV_EXPOSE_RESET_TOKEN','').lower() not in {'1','true','yes'}: raise 404` — no header or query parameter is ever read. Verified live via curl with X-Dev-Expose:1 header + ?DEV_EXPOSE_RESET_TOKEN=1 query — response is identical to baseline (200 in dev because env is set), and the source shows those inputs are simply ignored.",
+        "d) Under HIPAA_MODE=true the endpoint 404s regardless of role — the guard runs before user_role is even loaded. Confirmed via TestGateItem6::test_returns_404_when_hipaa_mode_on."
+      ]
+    },
+    "item_3_gitignore": {
+      "status": "PASS",
+      "evidence": [
+        ".gitignore contains: backend/.env, frontend/.env, .env, .env.* with !.env.example / !**/.env.example exceptions.",
+        "git ls-files | grep .env → EMPTY (no .env files tracked). .env.example templates are the only .env-related files in the repo."
+      ]
+    }
+  },
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/forms/templates",
+        "issue": "tests/test_phase10_forms.py::test_forms_templates_list_seeded fails — expects the 3 built-in templates (Treatment Consent, HIPAA/Privacy, Photo & Likeness Release) but only returns ['Photo & Likeness Release', 'TEST_PH10 Form Updated']. Treatment Consent + HIPAA are missing. When I curl'd right after the pytest run, only ['TEST_PH10 Form Updated'] came back — even Photo was gone. The seeder is either not seeding the 3 built-ins on startup, or a prior test is deleting them. Main agent claimed 'resolved by clearing renamed builtins and letting seed_demo re-create them fresh' — that fix is not holding.",
+        "priority": "MEDIUM (regresses main agent's own claim of 275/0/0; not a Sprint 1 gate item)"
+      }
+    ]
+  },
+  "regression_results": {
+    "full_pytest_suite": "274 passed, 2 skipped, 1 failed in 387s (6:27)",
+    "no_ignore_flags_used": true,
+    "sprint1_hardening": "19/19 passed (all Sprint 1 hardening tests including new TestGateItem2 (2 tests) and TestGateItem6 (3 tests))",
+    "phase4": "test_phase4.py all tests pass including test_change_password_and_revert (the previously-flagged import bug is now green)",
+    "phase7": "phase7 all pass (26 tests, 1 skipped)",
+    "phase10_forms": "1 test FAILED (test_forms_templates_list_seeded) — see minor bug above",
+    "health_endpoint": "/api/health returns {ok:true, integrations:{llm:emergent_proxy, email:sent_stub, sms:sent_stub, google_oauth_direct:false}} — unchanged",
+    "seeded_workforce_login": "All 5 fixture accounts login successfully via conftest.py monkey-patch (verified indirectly by every phase* test that uses admin_headers / staff_token / practitioner_token fixtures)"
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sprint1_auth_hardening.py",
+    "/app/test_reports/pytest/sprint1_hardening.xml",
+    "/app/test_reports/pytest/full_regression.xml"
+  ],
+  "action_items": [
+    "Fix tests/test_phase10_forms.py::test_forms_templates_list_seeded — investigate why built-in form templates (Treatment Consent, HIPAA Privacy, Photo Release) aren't being seeded or are being deleted between tests. Main agent should ensure seed_demo re-creates them idempotently AND that no test is bulk-deleting them.",
+    "OPTIONAL / NICE-TO-HAVE: TestGateItem6::test_cannot_be_activated_by_header_or_query_hackery only really asserts that current-env responses are consistent (both 200 because env is set). To make it a real attacker-simulation, either (a) monkeypatch.delenv + importlib.reload + call the function in-process (as its two siblings do), or (b) run pytest with a fresh subprocess where DEV_EXPOSE_RESET_TOKEN is unset. The endpoint code IS safe (verified by inspection + the other two tests), but the third test's assertion is weaker than its docstring implies."
+  ],
+  "critical_code_review_comments": [
+    "auth_utils._mfa_key() dev fallback returns b'dev-mfa-key-DO-NOT-USE-IN-PROD!!' (32 bytes) — good that it's exactly 32 bytes so AESGCM won't crash, but the string form makes it look like a placeholder. Consider adding a WARNING log at import time when this branch fires so nobody accidentally runs prod-adjacent traffic through it.",
+    "auth_utils.decrypt_mfa_secret() silently returns the legacy plaintext when the stored value lacks the 'enc-v1:' prefix. That's correct for in-flight migration but should log a WARN metric each time it fires so ops can detect if a new plaintext value sneaks in post-migration. Right now a regression that writes plaintext would go undetected until the next migration script run.",
+    "routers/auth.py::dev_reset_token — the 404 branch is safe, but consider adding an INFO log 'blocked dev/reset-token: hipaa_mode=%s expose_flag=%s' so ops see the gate firing during penetration tests.",
+    "backend/.env still ships MFA_ENC_KEY_B64='ZGV2LW1mYS1rZXktRE8tTk9ULVVTRS1JTi1QUk9EISE=' — that base64 decodes to 'dev-mfa-key-DO-NOT-USE-IN-PROD!!' (the same 32-byte dev fallback). Fine for dev/preview, but the deploy pipeline for the first HIPAA_MODE=true environment MUST rotate this to a fresh `openssl rand -base64 32`. Add a checklist item.",
+    "The dev fallback key means a compromised dev DB dump would be trivially decrypted with 32 known bytes. Not a HIPAA violation because HIPAA_MODE=false explicitly means non-PHI dev traffic, but flag it in the runbook.",
+    "tests/test_phase10_forms.py::test_forms_templates_list_seeded — the assertion 'assert any(\"Treatment Consent\" in t for t in titles)' fails at line 83. Either the seeder isn't running, or a previous test in the phase10 file (e.g., a bulk-delete) is nuking the builtins. Recommend a session-scoped fixture that guarantees seed_demo() ran and did NOT get overwritten.",
+    "conftest.py imports 'from auth_utils import encrypt_mfa_secret' at fixture-run time — good, this is a session-autouse fixture so the ciphertext is written once at session start. If tests were parallelized (pytest-xdist), each worker's session-autouse would fire, but Mongo writes are idempotent so still safe."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "99.6% (274/275 non-skipped passed) — the only failure is a pre-existing phase10 forms-seeder bug unrelated to Sprint 1 gate items",
+    "sprint1_gate_items": "100% (19/19 hardening tests including all 5 new gate-item tests)"
+  },
+  "test_credentials": "Admin: tallyravello@gmail.com / TEST123 (fixture-MFA), admin@natmedsol.local / Admin!2345 (fixture-MFA). Practitioner: ravello@natmedsol.local / Ravello!2345. Staff: frontdesk@natmedsol.local / FrontDesk!2345. Auditor: auditor@natmedsol.local / Auditor!2345. All 5 workforce accounts confirmed operational via conftest auto-TOTP monkey-patch on encrypted fixture secret.",
+  "seed_data_creation": "During the pytest run the sprint1_auth_hardening test authored ~15 s1-client-*@ex.com and s1-adm-*@ex.com throwaway accounts (each with a fresh AES-GCM encrypted mfa_secret). All are tagged and confined to the test_database. No production/seed data mutated. Also ran /app/backend/scripts/sprint1b_encrypt_mfa.py twice — reported 0 new encryptions both times (idempotent).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Sprint 1 gate remediation is GREEN for the 2 primary items (#2 MFA at-rest, #6 dev-helper safety). To re-verify: `REACT_APP_BACKEND_URL=<url> pytest /app/backend/tests/test_sprint1_auth_hardening.py -v` (19 tests, ~15s). For full regression: `pytest /app/backend/tests/ -v --tb=short` — expect 274/275 passing; the single failure is test_phase10_forms.py::test_forms_templates_list_seeded (builtin form templates disappearing between test runs, unrelated to Sprint 1). All 16 users with mfa_secret in Mongo have 'enc-v1:' prefix (0 plaintext). Migration script is idempotent. MFA_ENC_KEY_B64 in backend/.env is the dev fallback ('dev-mfa-key-DO-NOT-USE-IN-PROD!!' base64) — must rotate before HIPAA_MODE=true deploy. .gitignore correctly excludes all .env files (git ls-files shows zero tracked .env).",
+  "rca_of_the_phase10_forms_failure": "test_phase10_forms.py::test_forms_templates_list_seeded expects the 3 built-in templates. During pytest run, GET /api/forms/templates returned ['Photo & Likeness Release', 'TEST_PH10 Form Updated'] — 2 of 3 builtins missing. Right after (via curl), same endpoint returned ONLY ['TEST_PH10 Form Updated'] — even Photo was gone. Hypothesis: a phase10 test deletes/renames the builtin templates (see main agent's note about 'clearing renamed builtins') but the seeder doesn't re-run afterwards. Fix path: (a) make seed_demo idempotent + fire in a session-scoped autouse fixture in the phase10 test file, OR (b) have the test that renames builtins restore them in teardown. Not a Sprint 1 blocker, but blocks main agent's 275/0/0 claim."
+}
