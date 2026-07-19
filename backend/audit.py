@@ -25,11 +25,11 @@ the operation.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import re
-import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -105,8 +105,10 @@ def _canonical(row: Dict[str, Any]) -> str:
 
 
 # Serialize hash-chain reads/writes so concurrent inserts still form a valid
-# chain (single process; multi-process needs Redis / DB lock).
-_CHAIN_LOCK = threading.Lock()
+# chain. MUST be an asyncio.Lock — using a sync threading.Lock here deadlocks
+# the event loop the moment two coroutines contend, because the second call
+# blocks the thread while the first is awaiting its DB insert.
+_CHAIN_LOCK = asyncio.Lock()
 
 
 async def _prev_hash(db) -> str:
@@ -152,9 +154,8 @@ async def log_audit(
 
     required = action in REQUIRED_ACTIONS
     try:
-        # Compute prev_hash + this hash under a short critical section so
-        # concurrent writers can't clobber one another.
-        with _CHAIN_LOCK:
+        # Async lock keeps the chain deterministic without blocking the loop.
+        async with _CHAIN_LOCK:
             row["prev_hash"] = await _prev_hash(db)
             row["hash"] = hashlib.sha256(_canonical(row).encode("utf-8")).hexdigest()
             await db.audit_logs.insert_one(row)
