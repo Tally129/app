@@ -452,9 +452,14 @@ async def amend_note(note_id: str, payload: AmendIn, request: Request,
                 "code": "not_finalized",
                 "message": "Amendment is only supported on finalized notes. Finalize first.",
             })
-    reason = getattr(payload, "reason", None) or ""
+    reason = (getattr(payload, "reason", None) or "").strip()
     if not payload.content or len(payload.content.strip()) < 4:
         raise HTTPException(status_code=400, detail="Amendment content required")
+    if len(reason) < 4:
+        raise HTTPException(status_code=400, detail={
+            "code": "amendment_reason_required",
+            "message": "Amendment reason is required (min 4 characters) for HIPAA-aligned audit.",
+        })
     amendment = {
         "author_id": user["id"],
         "author_name": user.get("full_name", ""),

@@ -177,7 +177,7 @@ class NoteOut(NoteIn):
 
 class AmendIn(BaseModel):
     content: str
-    reason: Optional[str] = None
+    reason: str  # required for HIPAA-aligned audit; server enforces min length
 
 
 # --------- Files ---------
