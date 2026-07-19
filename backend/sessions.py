@@ -23,7 +23,7 @@ from audit import log_audit
 from deps import db
 
 REFRESH_TTL_DAYS = int(os.environ.get("REFRESH_TOKEN_TTL_DAYS", "7"))
-REFRESH_GRACE_SECONDS = int(os.environ.get("REFRESH_CONCURRENCY_GRACE_SECONDS", "5"))
+REFRESH_GRACE_SECONDS = int(os.environ.get("REFRESH_CONCURRENCY_GRACE_SECONDS", "10"))
 WORKFORCE_IDLE_TIMEOUT_MIN = int(os.environ.get("WORKFORCE_IDLE_TIMEOUT_MIN", "15"))
 WORKFORCE_ABSOLUTE_HOURS = int(os.environ.get("WORKFORCE_ABSOLUTE_SESSION_HOURS", "12"))
 CLIENT_IDLE_TIMEOUT_MIN = int(os.environ.get("CLIENT_IDLE_TIMEOUT_MIN", "60"))

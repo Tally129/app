@@ -25,7 +25,12 @@ export function setAccessToken(t) { _access_token = t || null; }
 export function getAccessToken() { return _access_token; }
 export function clearAccessToken() { _access_token = null; }
 
-// Cross-tab logout coordination — no token values are broadcast, only the signal.
+// Cross-tab logout + refresh coordination.
+// The `nms_auth` BroadcastChannel carries EVENT NAMES ONLY — never token
+// values. The `nms_refresh` Web Lock (when available) serializes refresh
+// calls across tabs so only one tab talks to /auth/refresh at a time; the
+// others wait for it to finish and then perform their own refresh (which
+// hits the concurrency-grace path with a fresh cookie).
 let bc = null;
 try { bc = new BroadcastChannel("nms_auth"); } catch { bc = null; }
 const bcListeners = new Set();
@@ -49,26 +54,51 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Single-flight refresh queue.
+// Single-flight refresh queue + cross-tab exclusive lock.
 let refreshing = null;
-async function doRefresh() {
-  if (refreshing) return refreshing;
-  refreshing = axios
-    .post(`${API_BASE}/auth/refresh`, {}, { withCredentials: true })
-    .then((r) => {
+
+async function _refreshOnce() {
+  // Perform the actual network call. Handles the backend's 409
+  // `concurrency_retry` by immediately retrying with the fresh cookie
+  // that the winning tab installed. Two retries max, then bail.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await axios.post(`${API_BASE}/auth/refresh`, {}, { withCredentials: true });
       _access_token = r.data.access_token;
       if (r.data.user) localStorage.setItem(LS.user, JSON.stringify(r.data.user));
+      // Notify any idle tabs — event only, never the token.
+      broadcastAuth("refresh-done");
       return _access_token;
-    })
-    .catch((e) => {
-      // 409 concurrency_retry → retry ONCE using the cookie the winner already set.
-      if (e?.response?.status === 409) {
-        return axios.post(`${API_BASE}/auth/refresh`, {}, { withCredentials: true })
-          .then((r2) => { _access_token = r2.data.access_token; return _access_token; });
+    } catch (e) {
+      if (e?.response?.status === 409 && attempt === 0) {
+        // 409 = server observed a same-family used token within the grace
+        // window. Another tab rotated ahead of us. Wait a beat so the
+        // browser applies the winning tab's Set-Cookie, then retry.
+        await new Promise((res) => setTimeout(res, 120));
+        continue;
       }
       throw e;
-    })
-    .finally(() => { refreshing = null; });
+    }
+  }
+  throw new Error("refresh_retry_exhausted");
+}
+
+async function doRefresh() {
+  if (refreshing) return refreshing;
+  refreshing = (async () => {
+    // Web Locks API serialises refresh across ALL tabs in this origin —
+    // solves the multi-tab race that otherwise triggers concurrency 409s
+    // for tabs 2..N. When Locks are unavailable, fall back to the
+    // per-tab single-flight (`refreshing`).
+    if (typeof navigator !== "undefined" && navigator.locks && typeof navigator.locks.request === "function") {
+      return await navigator.locks.request(
+        "nms_refresh_lock",
+        { mode: "exclusive" },
+        async () => _refreshOnce(),
+      );
+    }
+    return await _refreshOnce();
+  })().finally(() => { refreshing = null; });
   return refreshing;
 }
 export { doRefresh };
@@ -83,12 +113,15 @@ api.interceptors.response.use(
       original._retry = true;
       try {
         const newToken = await doRefresh();
-        original.headers.Authorization = `Bearer ${newToken}`;
+        if (newToken) original.headers.Authorization = `Bearer ${newToken}`;
         return api(original);
-      } catch {
+      } catch (e) {
+        // Only escalate to logout when the refresh really failed
+        // (session revoked / cookie missing) — never on the concurrency
+        // retry path (that's swallowed inside _refreshOnce).
         _access_token = null;
         localStorage.removeItem(LS.user);
-        broadcastAuth("logout");
+        broadcastAuth("session-expired");
         if (!window.location.pathname.startsWith("/login")) {
           window.location.href = "/login";
         }

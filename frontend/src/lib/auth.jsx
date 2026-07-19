@@ -57,10 +57,16 @@ export function AuthProvider({ children }) {
       }
     })();
     const off = onAuthBroadcast((msg) => {
-      if (msg?.event === "logout" || msg?.event === "logout-all") {
+      if (msg?.event === "logout" || msg?.event === "logout-all" || msg?.event === "session-expired") {
         clearAccessToken();
         localStorage.removeItem(LS.user);
         setUser(null);
+      }
+      // A sibling tab just refreshed — if we don't yet have a token in
+      // memory, kick off our own refresh (which will hit the concurrency
+      // grace path and get a fresh access token quickly).
+      if (msg?.event === "refresh-done" && !getAccessToken()) {
+        doRefresh().then(() => refreshMe()).catch(() => {});
       }
     });
     return () => { mounted = false; off(); };
