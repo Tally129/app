@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { useToast } from "../../hooks/use-toast";
 import { UserPlus, LogIn, LogOut, Building2, Users, Clock, X } from "lucide-react";
+import { getErrorMessage } from "../../lib/errors";
 
 const STATUSES = [
   { v: "checked_in", label: "Checked in" },
@@ -38,7 +39,7 @@ export default function FrontDesk() {
       setVisits(v.data || []);
       setClients(c.data || []);
     } catch (e) {
-      toast({ title: "Failed to load", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed to load", description: getErrorMessage(e) || "" });
     } finally {
       setLoading(false);
     }
@@ -62,7 +63,7 @@ export default function FrontDesk() {
       setForm({ client_id: "", room: "", walk_in: false });
       load();
     } catch (e) {
-      toast({ title: "Failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed", description: getErrorMessage(e) || "" });
     }
   };
 
@@ -71,7 +72,7 @@ export default function FrontDesk() {
       await api.put(`/front-desk/${id}`, payload);
       load();
     } catch (e) {
-      toast({ title: "Failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed", description: getErrorMessage(e) || "" });
     }
   };
 

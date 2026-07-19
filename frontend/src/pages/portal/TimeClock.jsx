@@ -6,6 +6,7 @@ import { Button } from "../../components/ui/button";
 import { useToast } from "../../hooks/use-toast";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../components/ui/tabs";
 import { Play, Pause, Square, Coffee, Timer as TimerIcon, History } from "lucide-react";
+import { getErrorMessage } from "../../lib/errors";
 
 function formatMin(mins) {
   if (mins == null) return "—";
@@ -46,7 +47,7 @@ export default function TimeClock() {
         setAllEntries(a.data || []);
       }
     } catch (e) {
-      toast({ title: "Failed to load", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed to load", description: getErrorMessage(e) || "" });
     }
   };
 
@@ -61,19 +62,19 @@ export default function TimeClock() {
 
   const punchIn = async () => {
     try { await api.post("/time-clock/punch-in"); toast({ title: "Punched in" }); load(); }
-    catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
   const punchOut = async () => {
     try { await api.post("/time-clock/punch-out"); toast({ title: "Punched out" }); load(); }
-    catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
   const breakStart = async () => {
     try { await api.post("/time-clock/break-start"); toast({ title: "Break started" }); load(); }
-    catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
   const breakEnd = async () => {
     try { await api.post("/time-clock/break-end"); toast({ title: "Break ended" }); load(); }
-    catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
 
   const editTime = async (e) => {
@@ -90,7 +91,7 @@ export default function TimeClock() {
       toast({ title: "Saved" });
       load();
     } catch (err) {
-      toast({ title: "Failed", description: err?.response?.data?.detail || "" });
+      toast({ title: "Failed", description: getErrorMessage(err) || "" });
     }
   };
 

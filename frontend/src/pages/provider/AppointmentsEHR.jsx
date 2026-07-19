@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "../../components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { useToast } from "../../hooks/use-toast";
+import { getErrorMessage } from "../../lib/errors";
 import {
   ChevronLeft, ChevronRight, Plus, CalendarDays, Video, Building2,
   PhoneCall, CheckCircle2, XCircle, UserCheck, PlayCircle, ExternalLink,
@@ -59,7 +60,7 @@ export default function AppointmentsEHR() {
       setClients(c.data || []);
       setTreatments(t.data || []);
     } catch (e) {
-      toast({ title: "Failed to load schedule", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed to load schedule", description: getErrorMessage(e) || "" });
     }
   }, [toast]);
 
@@ -92,7 +93,7 @@ export default function AppointmentsEHR() {
       await api.put(`/appointments/${id}`, { status });
       toast({ title: `Marked ${STATUS[status]?.label || status}` });
       load(); setSelected(null);
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
 
   return (
@@ -268,7 +269,7 @@ export default function AppointmentsEHR() {
                               await api.post(`/appointments/${selected.id}/recurrence`, { pattern: opt.p, count });
                               toast({ title: `Created ${count} ${opt.p} occurrences` });
                               setSelected(null); load();
-                            } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+                            } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
                           }}
                         >
                           {opt.label}
@@ -353,7 +354,7 @@ function NewAppointmentDialog({ open, onOpenChange, prefill, practitioners, clie
       toast({ title: "Appointment created" });
       onCreated();
     } catch (e) {
-      toast({ title: "Failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed", description: getErrorMessage(e) || "" });
     } finally {
       setSubmitting(false);
     }

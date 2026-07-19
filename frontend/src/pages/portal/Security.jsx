@@ -6,6 +6,7 @@ import { Input } from "../../components/ui/input";
 import { useToast } from "../../hooks/use-toast";
 import { useAuth } from "../../lib/auth";
 import { ShieldCheck, ShieldOff, KeyRound } from "lucide-react";
+import { getErrorMessage } from "../../lib/errors";
 
 export default function Security() {
   const { user, refreshMe } = useAuth();
@@ -35,7 +36,7 @@ export default function Security() {
       setCode("");
       await refreshMe();
     } catch (e) {
-      toast({ title: "Invalid code", description: e?.response?.data?.detail || "Try again." });
+      toast({ title: "Invalid code", description: getErrorMessage(e) || "Try again." });
     } finally {
       setBusy(false);
     }

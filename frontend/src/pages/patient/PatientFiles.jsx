@@ -4,6 +4,7 @@ import api, { API_BASE, LS } from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { Upload, Download, FolderOpen } from "lucide-react";
 import { useToast } from "../../hooks/use-toast";
+import { getErrorMessage } from "../../lib/errors";
 
 export default function PatientFiles({ clientIdProp }) {
   const { toast } = useToast();
@@ -50,7 +51,7 @@ export default function PatientFiles({ clientIdProp }) {
       e.target.value = "";
       load();
     } catch (err) {
-      toast({ title: "Upload failed", description: err?.response?.data?.detail || "Try again." });
+      toast({ title: "Upload failed", description: getErrorMessage(err) || "Try again." });
     } finally {
       setUploading(false);
     }

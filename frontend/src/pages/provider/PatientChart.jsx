@@ -12,6 +12,7 @@ import { ChevronLeft, PlusCircle, Save, Upload, Download, FolderOpen, DollarSign
 import TreatmentPlanBuilder from "../../components/TreatmentPlanBuilder";
 import LabsPanel from "../../components/LabsPanel";
 import SymptomTrends from "../../components/SymptomTrends";
+import { getErrorMessage } from "../../lib/errors";
 
 export default function PatientChart() {
   const { id } = useParams();
@@ -47,7 +48,7 @@ export default function PatientChart() {
       setShowNew(false);
       loadAll();
     } catch (e) {
-      toast({ title: "Failed", description: e?.response?.data?.detail || "Try again." });
+      toast({ title: "Failed", description: getErrorMessage(e) || "Try again." });
     }
   };
 
@@ -79,7 +80,7 @@ export default function PatientChart() {
       e.target.value = "";
       loadAll();
     } catch (err) {
-      toast({ title: "Upload failed", description: err?.response?.data?.detail || "Try again." });
+      toast({ title: "Upload failed", description: getErrorMessage(err) || "Try again." });
     } finally {
       setUploading(false);
     }
@@ -418,4 +419,3 @@ function PatientBillingTab({ clientId }) {
     </div>
   );
 }
-

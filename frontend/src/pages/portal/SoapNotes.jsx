@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { useToast } from "../../hooks/use-toast";
 import { useAuth } from "../../lib/auth";
+import { getErrorMessage } from "../../lib/errors";
 import {
   FileText, Search, Loader2, ClipboardList, Plus, Edit3, Trash2,
   User, ChevronRight, Sparkles, Save, History as HistoryIcon, X,
@@ -260,7 +261,7 @@ function NoteEditorDialog({ state, templates, clients, onOpenChange, onSaved }) 
       await api.post("/notes", { client_id: clientId, ...draft });
       toast({ title: "SOAP note saved", description: "Visible in the patient chart." });
       onSaved && onSaved();
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
     finally { setSaving(false); }
   };
 
@@ -342,7 +343,7 @@ function TemplateEditorDialog({ template, onOpenChange, onSaved }) {
       else await api.post("/soap-templates", body);
       toast({ title: "Template saved" });
       onSaved && onSaved();
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
     finally { setSaving(false); }
   };
 

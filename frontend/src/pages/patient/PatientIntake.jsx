@@ -8,6 +8,7 @@ import { Textarea } from "../../components/ui/textarea";
 import { Checkbox } from "../../components/ui/checkbox";
 import { useToast } from "../../hooks/use-toast";
 import { Check, ChevronLeft, ChevronRight, Save } from "lucide-react";
+import { getErrorMessage } from "../../lib/errors";
 
 const STEPS = ["Demographics", "Health history", "Symptoms", "Lifestyle", "Consent"];
 
@@ -71,7 +72,7 @@ export default function PatientIntake() {
           : "You can continue any time.",
       });
     } catch (e) {
-      toast({ title: "Save failed", description: e?.response?.data?.detail || "Please try again." });
+      toast({ title: "Save failed", description: getErrorMessage(e) || "Please try again." });
     } finally {
       setSaving(false);
     }

@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../components/ui/dialog";
 import { useToast } from "../hooks/use-toast";
 import { ChevronLeft, ChevronRight, CheckCircle2, User, Phone, Heart, Shield } from "lucide-react";
+import { getErrorMessage } from "../lib/errors";
 
 const STEPS = [
   { key: "demo", label: "Demographics", icon: User },
@@ -56,7 +57,7 @@ export default function AddPatientWizard({ open, onOpenChange, onCreated }) {
       reset();
       onOpenChange(false);
     } catch (e) {
-      toast({ title: "Failed to create client", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed to create client", description: getErrorMessage(e) || "" });
     } finally {
       setSubmitting(false);
     }

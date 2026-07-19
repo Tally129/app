@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../components/ui/ta
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { useToast } from "../../hooks/use-toast";
+import { getErrorMessage } from "../../lib/errors";
 import {
   FileText, Sparkles, Upload, Plus, Send, Edit3, Eye, Trash2,
   Search, Archive, ArchiveRestore, Loader2, Copy, X, GripVertical, CheckCircle2, ExternalLink,
@@ -62,7 +63,7 @@ export default function AdminFormsConsents() {
       setTemplates(t.data || []);
       setSubmissions(s.data || []);
     } catch (e) {
-      toast({ title: "Failed to load", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed to load", description: getErrorMessage(e) || "" });
     }
   };
   React.useEffect(() => { load(); }, [includeInactive]);
@@ -94,12 +95,12 @@ export default function AdminFormsConsents() {
       await api.put(`/forms/templates/${t.id}`, { ...t, active: !t.active });
       toast({ title: t.active ? "Archived" : "Unarchived" });
       load();
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
   const remove = async (t) => {
     if (!window.confirm(`Delete "${t.title}"? This cannot be undone.`)) return;
     try { await api.delete(`/forms/templates/${t.id}`); toast({ title: "Deleted" }); load(); }
-    catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
 
   return (
@@ -404,7 +405,7 @@ function FormEditorDialog({ open, onOpenChange, template, onSaved }) {
       toast({ title: "Saved" });
       onSaved && onSaved();
     } catch (e) {
-      toast({ title: "Save failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Save failed", description: getErrorMessage(e) || "" });
     } finally { setSaving(false); }
   };
 
@@ -530,7 +531,7 @@ function AiAssistDialog({ mode, onOpenChange, onResult }) {
       toast({ title: "Form ready", description: `${(res.data.fields || []).length} fields detected.` });
       onResult && onResult({ ...res.data });
     } catch (e) {
-      toast({ title: "AI failed", description: e?.response?.data?.detail || "Try again." });
+      toast({ title: "AI failed", description: getErrorMessage(e) || "Try again." });
     } finally { setLoading(false); }
   };
 
@@ -644,7 +645,7 @@ function SendFormDialog({ template, onOpenChange, onSent }) {
         : (r.data.delivery_status === "sent_stub" ? `${channel.toUpperCase()} queued (delivery stubbed in this environment).` : "Link generated — provide a recipient to send.");
       toast({ title: "Form ready", description: desc });
     } catch (e) {
-      toast({ title: "Failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed", description: getErrorMessage(e) || "" });
     } finally { setSubmitting(false); }
   };
 

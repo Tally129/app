@@ -8,6 +8,7 @@ import { Textarea } from "./ui/textarea";
 import { useToast } from "../hooks/use-toast";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceArea } from "recharts";
 import { Plus, Trash2 } from "lucide-react";
+import { getErrorMessage } from "../lib/errors";
 
 export default function LabsPanel({ clientId }) {
   const { toast } = useToast();
@@ -58,7 +59,7 @@ export default function LabsPanel({ clientId }) {
       toast({ title: "Recorded" });
       setForm({ ...form, value: "", notes: "" });
       load();
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
 
   const remove = async (id) => {

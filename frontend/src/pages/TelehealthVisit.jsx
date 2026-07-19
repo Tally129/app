@@ -7,6 +7,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Checkbox } from "../components/ui/checkbox";
 import { useToast } from "../hooks/use-toast";
+import { getErrorMessage } from "../lib/errors";
 import {
   Video, Mic, MicOff, VideoOff, PhoneOff, ArrowLeft,
   ShieldCheck, AlertCircle, Loader2, CheckCircle2, MonitorUp,
@@ -64,7 +65,7 @@ export default function TelehealthVisit() {
         if (!isProvider && !mine.consent_telehealth) setStage("consent");
         else setStage("tech");
       } catch (e) {
-        setErrMsg(e?.response?.data?.detail || "Could not load visit."); setStage("error");
+        setErrMsg(getErrorMessage(e) || "Could not load visit."); setStage("error");
       }
     };
     run();
@@ -104,7 +105,7 @@ export default function TelehealthVisit() {
       const mine = (r.data || []).find((a) => a.id === id);
       setAppt(mine);
       setStage("tech");
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
 
   // ---------- WebRTC + signaling ----------
@@ -143,7 +144,7 @@ export default function TelehealthVisit() {
       const t = await api.post(`/visits/${id}/ws-ticket`);
       ticket = t.data?.ticket || "";
     } catch (e) {
-      setErrMsg(e?.response?.data?.detail || "Could not authorize visit.");
+      setErrMsg(getErrorMessage(e) || "Could not authorize visit.");
       setStage("error");
       return;
     }
@@ -271,7 +272,7 @@ export default function TelehealthVisit() {
         try {
           await api.post(`/visits/${id}/recording`, fd, { headers: { "Content-Type": "multipart/form-data" } });
           toast({ title: "Recording uploaded" });
-        } catch (e) { toast({ title: "Recording upload failed", description: e?.response?.data?.detail || "" }); }
+        } catch (e) { toast({ title: "Recording upload failed", description: getErrorMessage(e) || "" }); }
       };
       mr.start(1000);
       setRecording(true);
@@ -306,7 +307,7 @@ export default function TelehealthVisit() {
         plan: r.data.plan || "",
       });
       toast({ title: "Auto-draft applied (from chat)" });
-    } catch (e) { toast({ title: "Auto-draft failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Auto-draft failed", description: getErrorMessage(e) || "" }); }
     finally { setAiBusy(false); }
   };
 
@@ -321,7 +322,7 @@ export default function TelehealthVisit() {
         plan: r.data.plan || "",
       });
       toast({ title: "AI SOAP draft generated" });
-    } catch (e) { toast({ title: "AI draft failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "AI draft failed", description: getErrorMessage(e) || "" }); }
     finally { setAiBusy(false); }
   };
 
@@ -332,7 +333,7 @@ export default function TelehealthVisit() {
       if (!a) return;
       await api.post("/notes", { ...soap, client_id: a.client_id });
       toast({ title: "SOAP note saved to chart" });
-    } catch (e) { toast({ title: "Save failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Save failed", description: getErrorMessage(e) || "" }); }
   };
 
   const endCall = (navigateToEnd = true) => {

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth, roleHome } from "../lib/auth";
 import { api } from "../lib/api";
+import { getErrorMessage } from "../lib/errors";
 
 /**
  * Landing route after the /api/auth/google/oauth/callback redirect.
@@ -27,7 +28,7 @@ export default function OAuthComplete() {
         const { user } = await completeOAuthFromTokens(data.access_token, data.user);
         navigate(roleHome(user.role), { replace: true });
       } catch (e) {
-        setError(e?.response?.data?.detail || e.message || "Sign-in failed");
+        setError(getErrorMessage(e) || e.message || "Sign-in failed");
       }
     })();
   }, [params, completeOAuthFromTokens, navigate]);

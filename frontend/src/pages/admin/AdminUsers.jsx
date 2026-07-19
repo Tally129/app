@@ -7,6 +7,7 @@ import { Label } from "../../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { useToast } from "../../hooks/use-toast";
 import { UserPlus } from "lucide-react";
+import { getErrorMessage } from "../../lib/errors";
 
 const ROLES = ["admin", "practitioner", "staff", "client"];
 
@@ -32,7 +33,7 @@ export default function AdminUsers() {
       setCreating(false);
       load();
     } catch (e) {
-      toast({ title: "Failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed", description: getErrorMessage(e) || "" });
     }
   };
 

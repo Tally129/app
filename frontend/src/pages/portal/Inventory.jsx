@@ -7,6 +7,7 @@ import { Label } from "../../components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { useToast } from "../../hooks/use-toast";
 import { Plus, Pencil, AlertTriangle, Boxes, Sliders, Calendar as CalendarIcon } from "lucide-react";
+import { getErrorMessage } from "../../lib/errors";
 
 const empty = { name: "", sku: "", category: "", stock: 0, unit_price: 0, low_stock_threshold: 5, active: true };
 const emptyLot = { lot_number: "", qty: 1, expires_on: "", note: "" };
@@ -49,7 +50,7 @@ export default function Inventory() {
       toast({ title: "Saved" });
       setEdit(null); load();
     } catch (e) {
-      toast({ title: "Failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed", description: getErrorMessage(e) || "" });
     }
   };
 
@@ -65,7 +66,7 @@ export default function Inventory() {
       setAdjust(null); setAdjustForm({ delta: 0, reason: "manual", note: "" });
       load();
     } catch (e) {
-      toast({ title: "Failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed", description: getErrorMessage(e) || "" });
     }
   };
 
@@ -80,7 +81,7 @@ export default function Inventory() {
       });
       toast({ title: "Lot added" });
       setLotFor(null); setLotForm(emptyLot); load();
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
 
   return (

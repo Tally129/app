@@ -9,6 +9,7 @@ import { Checkbox } from "./ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./ui/dialog";
 import { useToast } from "../hooks/use-toast";
 import { Plus, Pill, Apple, Moon, TestTube2, CalendarCheck, Eye, EyeOff, Trash2 } from "lucide-react";
+import { getErrorMessage } from "../lib/errors";
 
 const TYPE_META = {
   supplement: { icon: Pill, label: "Supplement" },
@@ -68,7 +69,7 @@ export default function TreatmentPlanBuilder({ clientId, onClose }) {
       setEditing(null);
       load();
     } catch (e) {
-      toast({ title: "Failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed", description: getErrorMessage(e) || "" });
     }
   };
 

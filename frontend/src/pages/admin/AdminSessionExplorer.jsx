@@ -3,6 +3,7 @@ import PortalLayout, { PortalHeader } from "../PortalLayout";
 import api from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
+import { getErrorMessage } from "../../lib/errors";
 
 function fmt(ts) {
   if (!ts) return "—";
@@ -34,7 +35,7 @@ export default function AdminSessionExplorer() {
       const { data } = await api.get("/admin/audit/verify-chain?limit=5000");
       setChain(data);
     } catch (e) {
-      setChain({ ok: false, error: e?.response?.data?.detail || e.message });
+      setChain({ ok: false, error: getErrorMessage(e) || e.message });
     }
   };
 

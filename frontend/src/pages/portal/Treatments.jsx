@@ -7,6 +7,7 @@ import { Label } from "../../components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { useToast } from "../../hooks/use-toast";
 import { Plus, Pencil, Trash2 } from "lucide-react";
+import { getErrorMessage } from "../../lib/errors";
 
 const empty = { name: "", category: "", duration_min: 60, price: 0, sku: "", description: "", active: true };
 
@@ -43,7 +44,7 @@ export default function Treatments() {
       toast({ title: "Saved" });
       setEdit(null); load();
     } catch (e) {
-      toast({ title: "Failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed", description: getErrorMessage(e) || "" });
     }
   };
 
@@ -53,7 +54,7 @@ export default function Treatments() {
       await api.delete(`/treatments/${id}`);
       toast({ title: "Deleted" }); load();
     } catch (e) {
-      toast({ title: "Failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed", description: getErrorMessage(e) || "" });
     }
   };
 

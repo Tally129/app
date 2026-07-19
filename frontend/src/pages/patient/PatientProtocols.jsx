@@ -7,6 +7,7 @@ import { Textarea } from "../../components/ui/textarea";
 import { useToast } from "../../hooks/use-toast";
 import { Leaf, CheckCircle2, XCircle, Loader2, Sparkles, Clock, ListChecks } from "lucide-react";
 import { EnrollmentDialog } from "../portal/Protocols";
+import { getErrorMessage } from "../../lib/errors";
 
 /**
  * Patient view of their proposed and active protocols.
@@ -44,7 +45,7 @@ export default function PatientProtocols() {
       toast({ title: decideKind === "accept" ? "Protocol accepted!" : "Protocol declined" });
       setDecideTarget(null); setNote(""); setDecideKind("");
       load();
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
     finally { setSubmitting(false); }
   };
 

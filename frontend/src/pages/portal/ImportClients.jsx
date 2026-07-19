@@ -4,6 +4,7 @@ import api from "../../lib/api";
 import { Button } from "../../components/ui/button";
 import { useToast } from "../../hooks/use-toast";
 import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle } from "lucide-react";
+import { getErrorMessage } from "../../lib/errors";
 
 const SUPPORTED = ["full_name", "email", "phone", "dob", "sex", "address", "emergency_contact"];
 
@@ -36,7 +37,7 @@ export default function ImportClients() {
       setResult(r.data);
       toast({ title: `Imported ${r.data.imported} · skipped ${r.data.skipped}` });
     } catch (e) {
-      toast({ title: "Import failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Import failed", description: getErrorMessage(e) || "" });
     } finally {
       setSubmitting(false);
     }

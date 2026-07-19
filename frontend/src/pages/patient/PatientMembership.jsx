@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Label } from "../../components/ui/label";
 import { useToast } from "../../hooks/use-toast";
 import { Crown, CheckCircle2 } from "lucide-react";
+import { getErrorMessage } from "../../lib/errors";
 
 const TIERS = [
   { id: "essentials", name: "Essentials Wellness", price: 99, perks: ["1 consult / month", "Seasonal detox guidance", "10% off supplements"] },
@@ -27,7 +28,7 @@ export default function PatientMembership() {
       await api.post("/memberships", { tier, billing_method: method });
       toast({ title: "Welcome!", description: method === "stripe" ? "Stripe integration will be activated once API key is set." : "Please complete payment in-office via Chase POS." });
       load();
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
 
   return (

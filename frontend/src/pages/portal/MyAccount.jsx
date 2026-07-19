@@ -7,6 +7,7 @@ import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { useToast } from "../../hooks/use-toast";
 import { Save, KeyRound, Download, ShieldCheck } from "lucide-react";
+import { getErrorMessage } from "../../lib/errors";
 
 export default function MyAccount() {
   const { user, refreshMe } = useAuth();
@@ -27,7 +28,7 @@ export default function MyAccount() {
       toast({ title: "Profile updated" });
       if (refreshMe) await refreshMe();
     } catch (e) {
-      toast({ title: "Failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed", description: getErrorMessage(e) || "" });
     } finally {
       setSavingProfile(false);
     }
@@ -51,7 +52,7 @@ export default function MyAccount() {
       toast({ title: "Password changed" });
       setPw({ current_password: "", new_password: "", confirm: "" });
     } catch (e) {
-      toast({ title: "Failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed", description: getErrorMessage(e) || "" });
     } finally {
       setSavingPw(false);
     }
@@ -170,7 +171,7 @@ function MyDataExportCard() {
       a.click();
       URL.revokeObjectURL(url);
       toast({ title: "Downloaded", description: "Under HIPAA §164.524 you have the right to a copy of your record." });
-    } catch (e) { toast({ title: "Export failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Export failed", description: getErrorMessage(e) || "" }); }
     finally { setBusy(false); }
   };
   const downloadDisclosures = async () => {
@@ -187,7 +188,7 @@ function MyDataExportCard() {
       a.click();
       URL.revokeObjectURL(url);
       toast({ title: "Downloaded", description: "Accounting of disclosures under HIPAA §164.528." });
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
     finally { setDisclosuresBusy(false); }
   };
   return (

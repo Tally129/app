@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../components/ui/tabs";
 import { useToast } from "../../hooks/use-toast";
 import { Plus, Trash2, Receipt, Stethoscope, Boxes, Pencil } from "lucide-react";
+import { getErrorMessage } from "../../lib/errors";
 
 const PAY_METHODS = [
   { v: "chase_pos", label: "Chase POS" },
@@ -44,7 +45,7 @@ export default function PointOfSale() {
       setInventory((i.data || []).filter((x) => x.active !== false));
       setClients(c.data || []);
     } catch (e) {
-      toast({ title: "Failed to load catalog", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed to load catalog", description: getErrorMessage(e) || "" });
     }
   };
   React.useEffect(() => { load(); }, []);
@@ -113,7 +114,7 @@ export default function PointOfSale() {
       setCart([]); setDiscount(0); setTip(0); setTaxRate(0); setNote(""); setPaymentRef("");
       load();
     } catch (e) {
-      toast({ title: "Checkout failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Checkout failed", description: getErrorMessage(e) || "" });
     } finally {
       setSubmitting(false);
     }

@@ -8,6 +8,7 @@ import { Label } from "../components/ui/label";
 import { ArrowLeft } from "lucide-react";
 import { useToast } from "../hooks/use-toast";
 import { useAuth, roleHome } from "../lib/auth";
+import { getErrorMessage } from "../lib/errors";
 
 export default function Login() {
   const { toast } = useToast();
@@ -45,7 +46,7 @@ export default function Login() {
     } catch (err) {
       toast({
         title: "Sign in failed",
-        description: err?.response?.data?.detail || "Please try again.",
+        description: getErrorMessage(err) || "Please try again.",
       });
     } finally {
       setBusy(false);
@@ -72,7 +73,7 @@ export default function Login() {
     try {
       await beginGoogleOAuthDirect();
     } catch (e) {
-      toast({ title: "Google sign-in unavailable", description: e?.response?.data?.detail || e.message });
+      toast({ title: "Google sign-in unavailable", description: getErrorMessage(e) || e.message });
     }
   };
 
@@ -93,7 +94,7 @@ export default function Login() {
       } catch (err) {
         toast({
           title: "Google sign-in failed",
-          description: err?.response?.data?.detail || "Try email sign-in instead.",
+          description: getErrorMessage(err) || "Try email sign-in instead.",
         });
       }
     })();

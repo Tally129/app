@@ -8,6 +8,7 @@ import { Label } from "../components/ui/label";
 import { ArrowLeft } from "lucide-react";
 import { useToast } from "../hooks/use-toast";
 import { useAuth, roleHome } from "../lib/auth";
+import { getErrorMessage } from "../lib/errors";
 
 export default function Signup() {
   const { toast } = useToast();
@@ -31,7 +32,7 @@ export default function Signup() {
     } catch (err) {
       toast({
         title: "Could not create account",
-        description: err?.response?.data?.detail || "Please try again.",
+        description: getErrorMessage(err) || "Please try again.",
       });
     } finally {
       setBusy(false);

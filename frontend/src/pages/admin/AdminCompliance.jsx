@@ -5,6 +5,7 @@ import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
 import { useToast } from "../../hooks/use-toast";
 import { ShieldCheck, ExternalLink, Loader2, CheckCircle2, Circle, Clock, XCircle, Save } from "lucide-react";
+import { getErrorMessage } from "../../lib/errors";
 
 const STATUS_META = {
   not_started:    { label: "Not started",    color: "bg-[#f5e3e3] text-[#7a2a2a] border-[#d4a8a8]", icon: XCircle },
@@ -21,7 +22,7 @@ export default function AdminCompliance() {
 
   const load = async () => {
     try { const r = await api.get("/compliance/baa-checklist"); setRows(r.data || []); }
-    catch (e) { toast({ title: "Failed to load", description: e?.response?.data?.detail || "" }); }
+    catch (e) { toast({ title: "Failed to load", description: getErrorMessage(e) || "" }); }
   };
   React.useEffect(() => { load(); }, []);
 
@@ -31,7 +32,7 @@ export default function AdminCompliance() {
       const r = await api.put(`/compliance/baa-checklist/${key}`, patch);
       setRows((rs) => rs.map((x) => x.key === key ? r.data : x));
       toast({ title: patch.status === "signed" ? "Marked as signed ✓" : "Updated" });
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
     finally { setBusy((b) => ({ ...b, [key]: false })); }
   };
 

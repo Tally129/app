@@ -7,6 +7,7 @@ import { Label } from "../components/ui/label";
 import { useAuth, roleHome } from "../lib/auth";
 import { useToast } from "../hooks/use-toast";
 import { Lock, Briefcase, ArrowRight, Building2 } from "lucide-react";
+import { getErrorMessage } from "../lib/errors";
 
 /**
  * Dedicated staff sign-in. Same backend as /login — cosmetic landing only.
@@ -39,7 +40,7 @@ export default function StaffLogin() {
       }
       navigate(roleHome(res.user.role), { replace: true });
     } catch (err) {
-      toast({ title: "Sign-in failed", description: err?.response?.data?.detail || "Check your email and password." });
+      toast({ title: "Sign-in failed", description: getErrorMessage(err) || "Check your email and password." });
     } finally { setSubmitting(false); }
   };
 

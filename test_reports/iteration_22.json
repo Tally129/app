@@ -1,0 +1,35 @@
+{
+  "summary": "Verified P0 fix for React child crash caused by rendering structured HTTPException detail objects. All 5 verification checks passed: (1) Jest unit tests 10/10 PASS, (2) wrong password shows friendly string toast 'Sign in failed / Invalid email or password' with no React-child crash, (3) invalid MFA (000000) shows 'Sign in failed / Invalid MFA code' with no crash, (4) /portal/admin/audit renders all rows including auth.login_fail entries (previous crash path) cleanly, (5) multi-tab open of /portal/admin across 3 tabs — no React-child console errors or error-boundary overlays, (6) yarn build succeeds with exit code 0.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/frontend/src/lib/errors.test.js"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "getErrorMessage in /app/frontend/src/lib/errors.js is well-scoped: string-first, then {code,message}, then Pydantic v2 array, then generic message/error keys, then Error.message, with a safe fallback. No renderable object can leak into JSX via this helper.",
+    "Existing (pre-P0) lint warnings remain (react-hooks/exhaustive-deps in Protocols.jsx, TimeClock.jsx, etc.). Non-blocking, not related to this fix."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (skipped per request)",
+    "frontend": "100%"
+  },
+  "test_credentials": "admin@natmedsol.local / Admin!2345 (MFA secret JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP)",
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "P0 React-child render crash on structured HTTPException detail is FIXED and verified. Central helper is /app/frontend/src/lib/errors.js exposing getErrorMessage/getErrorCode. All 33 call sites use it. Jest suite: `cd /app/frontend && CI=true yarn test src/lib/errors.test.js --watchAll=false` — 10/10 PASS. Browser check: wrong password + invalid MFA both produce readable string toasts, no console error contains 'Objects are not valid as a React child'. yarn build: exit 0 (build/static/js/main.e7f6b63a.js 366kB gzipped).",
+  "observed_ui_messages": {
+    "wrong_password_toast": "Sign in failed\\nInvalid email or password",
+    "invalid_mfa_toast": "Sign in failed\\nInvalid MFA code"
+  },
+  "rca of the issue": "N/A — fix verified, no regressions found."
+}

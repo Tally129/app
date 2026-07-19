@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../components/ui/ta
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { useToast } from "../../hooks/use-toast";
+import { getErrorMessage } from "../../lib/errors";
 import {
   Video, Calendar, Clock, History, Settings2, Loader2, Play, Mic, MicOff, VideoOff,
   Lock, FileVideo, ExternalLink, Plus, Sparkles, Phone, Wifi,
@@ -281,7 +282,7 @@ function InstantVisitDialog({ open, onOpenChange, onCreated }) {
       // Open the visit immediately (preserve auth context via React Router)
       navigate(`/portal/visit/${r.data.id}`);
     } catch (e) {
-      toast({ title: "Failed to start", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed to start", description: getErrorMessage(e) || "" });
     } finally { setSubmitting(false); }
   };
 

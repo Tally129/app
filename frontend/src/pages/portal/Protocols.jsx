@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { useToast } from "../../hooks/use-toast";
 import { useAuth } from "../../lib/auth";
+import { getErrorMessage } from "../../lib/errors";
 import {
   Activity, Plus, Edit3, Trash2, Send, CheckCircle2, Loader2, Clock,
   ChevronRight, Leaf, X, Search, ArchiveRestore, Archive, Upload, Sparkles,
@@ -58,7 +59,7 @@ export default function Protocols() {
       setProviders(p.data || []);
       setClients(c.data || []);
     } catch (e) {
-      toast({ title: "Failed to load", description: e?.response?.data?.detail || "" });
+      toast({ title: "Failed to load", description: getErrorMessage(e) || "" });
     }
   };
   React.useEffect(() => { loadAll(); }, [showInactive]);
@@ -74,12 +75,12 @@ export default function Protocols() {
 
   const archive = async (t) => {
     try { await api.put(`/protocols/templates/${t.id}`, { ...t, active: !t.active }); toast({ title: t.active ? "Archived" : "Restored" }); loadAll(); }
-    catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
   const remove = async (t) => {
     if (!window.confirm(`Delete "${t.title}"?`)) return;
     try { await api.delete(`/protocols/templates/${t.id}`); toast({ title: "Deleted" }); loadAll(); }
-    catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
 
   return (
@@ -320,7 +321,7 @@ function ProtocolTemplateEditor({ template, onOpenChange, onSaved }) {
       else await api.post("/protocols/templates", body);
       toast({ title: "Saved" });
       onSaved && onSaved();
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
     finally { setSaving(false); }
   };
 
@@ -391,7 +392,7 @@ function ProposeProtocolDialog({ template, clients, onOpenChange, onProposed }) 
       });
       toast({ title: "Protocol proposed", description: "Patient will see it in their portal." });
       onProposed && onProposed();
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
     finally { setSubmitting(false); }
   };
 
@@ -448,7 +449,7 @@ export function EnrollmentDialog({ enrollment, onOpenChange, onChanged, viewOnly
       });
       setEnr(r.data);
       onChanged && onChanged();
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
 
   const grid = {};
@@ -571,7 +572,7 @@ function ProtocolAiAssistDialog({ mode, onOpenChange, onResult }) {
       });
       onResult && onResult(d);
     } catch (e) {
-      toast({ title: "AI failed", description: e?.response?.data?.detail || "Try again." });
+      toast({ title: "AI failed", description: getErrorMessage(e) || "Try again." });
     } finally { setLoading(false); }
   };
 

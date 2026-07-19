@@ -7,6 +7,7 @@ import { Label } from "../components/ui/label";
 import { useToast } from "../hooks/use-toast";
 import { Loader2, CheckCircle2, ShieldCheck, FileText } from "lucide-react";
 import { FieldRenderer, SignaturePad } from "./admin/AdminFormsConsents";
+import { getErrorMessage } from "../lib/errors";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -30,7 +31,7 @@ export default function FormResponder() {
     setLoading(true);
     axios.get(`${API}/public/forms/${token}`)
       .then((r) => { if (active) setTpl(r.data); })
-      .catch((e) => { if (active) setError(e?.response?.data?.detail || "This link is invalid or expired."); })
+      .catch((e) => { if (active) setError(getErrorMessage(e) || "This link is invalid or expired."); })
       .finally(() => active && setLoading(false));
     return () => { active = false; };
   }, [token]);
@@ -61,7 +62,7 @@ export default function FormResponder() {
       });
       setDone(true);
     } catch (e) {
-      toast({ title: "Submit failed", description: e?.response?.data?.detail || "Try again." });
+      toast({ title: "Submit failed", description: getErrorMessage(e) || "Try again." });
     } finally {
       setSubmitting(false);
     }

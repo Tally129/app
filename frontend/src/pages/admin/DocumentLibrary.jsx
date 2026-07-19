@@ -9,6 +9,7 @@ import { Textarea } from "../../components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { useToast } from "../../hooks/use-toast";
 import { useAuth } from "../../lib/auth";
+import { getErrorMessage } from "../../lib/errors";
 import {
   FileUp, Sparkles, FileText, Activity, ClipboardList, Pill,
   Loader2, ArrowRight, CheckCircle2, AlertCircle, Trash2,
@@ -65,7 +66,7 @@ export default function DocumentLibrary() {
         description: r.data?.classification?.reasoning || "",
       });
     } catch (e) {
-      toast({ title: "Analysis failed", description: e?.response?.data?.detail || "Try a smaller PDF/DOCX." });
+      toast({ title: "Analysis failed", description: getErrorMessage(e) || "Try a smaller PDF/DOCX." });
     } finally { setAnalyzing(false); }
   };
 
@@ -132,14 +133,14 @@ export default function DocumentLibrary() {
         toast({ title: "Document saved as note", description: "Couldn't classify cleanly — review the raw text." });
       }
     } catch (e) {
-      toast({ title: "Save failed", description: e?.response?.data?.detail || "" });
+      toast({ title: "Save failed", description: getErrorMessage(e) || "" });
     }
   };
 
   const removeSupp = async (id) => {
     if (!window.confirm("Delete this supplement sheet?")) return;
     try { await api.delete(`/library/supplements/${id}`); loadSupplements(); }
-    catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
 
   return (

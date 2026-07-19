@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Label } from "../../components/ui/label";
 import { useToast } from "../../hooks/use-toast";
 import { CalendarDays, Plus, X, Video, MapPin } from "lucide-react";
+import { getErrorMessage } from "../../lib/errors";
 
 export default function PatientAppointments() {
   const { toast } = useToast();
@@ -58,7 +59,7 @@ export default function PatientAppointments() {
       toast({ title: "Requested", description: form.visit_mode === "telehealth" ? "We'll send your video visit link." : "We'll confirm your appointment shortly." });
       setOpen(false);
       load();
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
 
   const cancel = async (a) => {

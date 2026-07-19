@@ -11,6 +11,7 @@ import { Textarea } from "../../components/ui/textarea";
 import { Label } from "../../components/ui/label";
 import { useToast } from "../../hooks/use-toast";
 import { ChevronLeft, ChevronRight, CalendarDays, Plus, Trash2 } from "lucide-react";
+import { getErrorMessage } from "../../lib/errors";
 
 const HOUR_START = 8;
 const HOUR_END = 19;
@@ -87,7 +88,7 @@ export default function ProviderSchedule() {
       toast({ title: "Appointment created" });
       setOpenNew(false);
       load();
-    } catch (e) { toast({ title: "Failed", description: e?.response?.data?.detail || "" }); }
+    } catch (e) { toast({ title: "Failed", description: getErrorMessage(e) || "" }); }
   };
 
   const updateAppt = async (changes) => {
