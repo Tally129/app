@@ -56,12 +56,14 @@ import StaffDashboard from "./pages/staff/StaffDashboard";
 import { Toaster } from "./components/ui/toaster";
 import { AuthProvider } from "./lib/auth";
 import { Protected } from "./lib/Protected";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 function App() {
   return (
     <div className="App">
-      <BrowserRouter>
-        <AuthProvider>
+      <ErrorBoundary>
+        <BrowserRouter>
+          <AuthProvider>
           <PushOptInBanner />
           <SessionTimeout />
           <Routes>
@@ -173,6 +175,7 @@ function App() {
           <Toaster />
         </AuthProvider>
       </BrowserRouter>
+      </ErrorBoundary>
     </div>
   );
 }

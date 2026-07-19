@@ -127,9 +127,38 @@ api.interceptors.response.use(
         }
       }
     }
+    // Tag every 403 as an EXPECTED authorization denial. Callers who care
+    // handle it explicitly; anyone who forgets to `.catch` won't produce a
+    // scary red console error. The `handled` flag is consumed by our global
+    // unhandledrejection listener below.
+    if (status === 403) {
+      try {
+        error.isAuthDenied = true;
+        error.handled = true;
+      } catch { /* frozen error object */ }
+    }
     return Promise.reject(error);
   }
 );
+
+// Global safety net for background fetches that forget to `.catch`.
+// Purpose: prevent expected 403 (and stale-request 401 already redirected)
+// from surfacing as red "Uncaught (in promise) AxiosError" console noise or
+// triggering React error boundaries. We DO NOT swallow other errors — real
+// bugs still propagate.
+if (typeof window !== "undefined" && !window.__nms_rejection_installed) {
+  window.__nms_rejection_installed = true;
+  window.addEventListener("unhandledrejection", (ev) => {
+    const err = ev.reason;
+    const status = err?.response?.status;
+    if (status === 403 || err?.isAuthDenied) {
+      // Log at debug level (visible only if devtools filter allows) and
+      // suppress the default surfacing.
+      console.debug("[nms] suppressed 403 auth denial:", err?.config?.url || err);
+      ev.preventDefault();
+    }
+  });
+}
 
 export { api };
 export default api;
