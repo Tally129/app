@@ -98,13 +98,120 @@ async def public_appointment_request(payload: AppointmentRequestIn, request: Req
     doc["status"] = "new"
     doc["ip"] = get_client_ip(request)
     await db.appointment_requests.insert_one(doc)
-    logger.info("[SENDGRID STUB] Would email staff about new appointment request from %s", payload.fullName)
+    from notifiers import send_email as _send_email
+    _delivery = await _send_email(
+        db=db,
+        to=os.environ.get("REMINDERS_STAFF_EMAIL", payload.email),
+        subject=f"New appointment request from {payload.fullName}",
+        html=f"{payload.fullName} &lt;{payload.email}&gt; requested an appointment.",
+        action="appointment_request.new",
+    )
     await db.integration_log.insert_one({
         "id": new_id(), "service": "sendgrid", "action": "appointment_request_notification",
         "payload": {"to": payload.email, "name": payload.fullName},
-        "_stubbed": True, "ts": datetime.now(timezone.utc),
+        "_stubbed": _delivery == "sent_stub",
+        "delivery_status": _delivery,
+        "ts": datetime.now(timezone.utc),
     })
+    await log_audit(db, None, payload.email, "appointment_request.create",
+                    resource_type="appointment_request", resource_id=doc["id"],
+                    metadata={"name": payload.fullName},
+                    ip=get_client_ip(request),
+                    user_agent=request.headers.get("user-agent"))
     return {"ok": True, "id": doc["id"]}
+
+
+# =================== STAFF REVIEW WORKFLOW ===================
+@api.get("/appointment-requests")
+async def list_appointment_requests(status: Optional[str] = None,
+                                    user=Depends(require_roles("admin", "staff", "front_desk", "frontdesk"))):
+    q = {"status": status} if status else {}
+    rows = await db.appointment_requests.find(q).sort("created_at", -1).to_list(200)
+    return [_strip_id(r) for r in rows]
+
+
+async def _notify_patient(req_row: dict, action: str, extra: dict | None = None):
+    from notifiers import send_email as _send_email
+    subj_map = {
+        "approve": "Your appointment request has been approved",
+        "decline": "Update on your appointment request",
+        "reschedule": "Alternative time for your appointment",
+    }
+    body_map = {
+        "approve": "Great news — your appointment request has been approved. Our staff will contact you shortly with confirmation details.",
+        "decline": "Unfortunately we cannot accommodate your request at this time. Please reply to explore alternative options.",
+        "reschedule": f"We'd like to propose a different time. Suggested: {(extra or {}).get('suggested_time', 'staff will follow up')}.",
+    }
+    delivery = await _send_email(
+        db=db,
+        to=req_row.get("email") or "",
+        subject=subj_map.get(action, "Appointment update"),
+        html=body_map.get(action, "Update on your appointment request."),
+        action=f"appointment_request.{action}",
+    )
+    return delivery
+
+
+@api.post("/appointment-requests/{req_id}/approve")
+async def approve_request(req_id: str, request: Request,
+                          user=Depends(require_roles("admin", "staff", "front_desk", "frontdesk"))):
+    req = await db.appointment_requests.find_one({"id": req_id})
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if req.get("status") == "approved":
+        return {"ok": True, "already_approved": True}
+    now = datetime.now(timezone.utc)
+    await db.appointment_requests.update_one({"id": req_id},
+        {"$set": {"status": "approved", "reviewed_at": now, "reviewed_by": user["id"]}})
+    delivery = await _notify_patient(req, "approve")
+    await log_audit(db, user["id"], user["email"], "appointment_request.approve",
+                    resource_type="appointment_request", resource_id=req_id,
+                    metadata={"delivery": delivery, "patient_email": req.get("email")},
+                    severity="info", outcome="success",
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return {"ok": True, "delivery": delivery}
+
+
+@api.post("/appointment-requests/{req_id}/decline")
+async def decline_request(req_id: str, request: Request, payload: dict = None,
+                          user=Depends(require_roles("admin", "staff", "front_desk", "frontdesk"))):
+    req = await db.appointment_requests.find_one({"id": req_id})
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    reason = str((payload or {}).get("reason") or "")
+    now = datetime.now(timezone.utc)
+    await db.appointment_requests.update_one({"id": req_id},
+        {"$set": {"status": "declined", "reviewed_at": now, "reviewed_by": user["id"],
+                  "decline_reason": reason}})
+    delivery = await _notify_patient(req, "decline")
+    await log_audit(db, user["id"], user["email"], "appointment_request.decline",
+                    resource_type="appointment_request", resource_id=req_id,
+                    metadata={"delivery": delivery, "reason_preview": reason[:80]},
+                    severity="info", outcome="success",
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return {"ok": True, "delivery": delivery}
+
+
+@api.post("/appointment-requests/{req_id}/reschedule")
+async def reschedule_request(req_id: str, payload: dict, request: Request,
+                             user=Depends(require_roles("admin", "staff", "front_desk", "frontdesk"))):
+    req = await db.appointment_requests.find_one({"id": req_id})
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    suggested = str((payload or {}).get("suggested_time") or "")
+    if not suggested:
+        raise HTTPException(status_code=400, detail="suggested_time is required")
+    now = datetime.now(timezone.utc)
+    await db.appointment_requests.update_one({"id": req_id},
+        {"$set": {"status": "reschedule_proposed", "reviewed_at": now,
+                  "reviewed_by": user["id"], "suggested_time": suggested}})
+    delivery = await _notify_patient(req, "reschedule", {"suggested_time": suggested})
+    await log_audit(db, user["id"], user["email"], "appointment_request.reschedule",
+                    resource_type="appointment_request", resource_id=req_id,
+                    metadata={"delivery": delivery, "suggested_time": suggested},
+                    severity="info", outcome="success",
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    return {"ok": True, "delivery": delivery}
 
 
 @api.post("/public/vip-signup")
