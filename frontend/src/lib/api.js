@@ -42,7 +42,16 @@ if (bc) {
 export function onAuthBroadcast(cb) { bcListeners.add(cb); return () => bcListeners.delete(cb); }
 export function broadcastAuth(event) { try { bc && bc.postMessage({ event, ts: Date.now() }); } catch {} }
 
-const api = axios.create({ baseURL: API_BASE });
+const api = axios.create({
+  baseURL: API_BASE,
+  // CRITICAL: treat 403 as a NON-error status so axios' internal `settle()`
+  // resolves the promise instead of constructing an AxiosError. This is the
+  // only way to prevent CRA's react-error-overlay from ever seeing the
+  // "Request failed with status code 403" error — the AxiosError is never
+  // created in the first place. The response interceptor below converts the
+  // 403 response into the { data: null, __isAuthDenied: true } sentinel.
+  validateStatus: (status) => (status >= 200 && status < 300) || status === 403,
+});
 
 api.interceptors.request.use((config) => {
   const token = _access_token;
@@ -105,7 +114,24 @@ export { doRefresh };
 
 // Retry cap protects against infinite 401 loops.
 api.interceptors.response.use(
-  (r) => r,
+  (r) => {
+    // Because validateStatus allows 403, we may arrive here with a 403.
+    // Convert it to the sentinel shape so callers don't try to render
+    // the raw structured detail object (which is not React-renderable).
+    if (r && r.status === 403) {
+      // eslint-disable-next-line no-console
+      console.debug("[nms] 403 auth denial resolved as empty:", r?.config?.url);
+      const detail = r?.data?.detail;
+      const msg = typeof detail === "string" ? detail : detail?.message || "You don't have access.";
+      return {
+        ...r,
+        data: null,
+        __isAuthDenied: true,
+        __errorMessage: msg,
+      };
+    }
+    return r;
+  },
   async (error) => {
     const original = error.config;
     const status = error?.response?.status;
