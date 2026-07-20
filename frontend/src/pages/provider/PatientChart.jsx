@@ -12,11 +12,19 @@ import { ChevronLeft, PlusCircle, Save, Upload, Download, FolderOpen, DollarSign
 import TreatmentPlanBuilder from "../../components/TreatmentPlanBuilder";
 import LabsPanel from "../../components/LabsPanel";
 import SymptomTrends from "../../components/SymptomTrends";
+import { AuthorizationBadge, useDelegatedEdit } from "../../components/AuthorizationBadge";
+import { useAuth } from "../../lib/auth";
 import { getErrorMessage } from "../../lib/errors";
 
 export default function PatientChart() {
   const { id } = useParams();
   const { toast } = useToast();
+  const { user } = useAuth();
+  const role = user?.role;
+  const isProvider = role === "practitioner";
+  const { canEdit, state: authState, delegation } = useDelegatedEdit({
+    role, clientId: id, recordStatus: "draft",
+  });
   const [client, setClient] = React.useState(null);
   const [intake, setIntake] = React.useState(null);
   const [notes, setNotes] = React.useState([]);
@@ -163,8 +171,15 @@ export default function PatientChart() {
         </TabsContent>
 
         <TabsContent value="notes" className="mt-6 space-y-5">
-          <div className="flex justify-end">
-            <Button onClick={() => setShowNew((v) => !v)} className="btn-lift h-10 rounded-full bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6]">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <AuthorizationBadge state={authState} data-testid="notes-auth-badge" />
+            <Button
+              onClick={() => setShowNew((v) => !v)}
+              disabled={!canEdit}
+              title={canEdit ? "" : "Provider authorization required"}
+              className="btn-lift h-10 rounded-full bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6] disabled:opacity-40 disabled:cursor-not-allowed"
+              data-testid="notes-new-btn"
+            >
               <PlusCircle size={16} className="mr-2" /> New SOAP note
             </Button>
           </div>
@@ -214,13 +229,17 @@ export default function PatientChart() {
                 <Input
                   value={amending[n.id] || ""}
                   onChange={(e) => setAmending({ ...amending, [n.id]: e.target.value })}
-                  placeholder="Add amendment (original note stays immutable)"
-                  className="bg-[#f6f1e6] border-[#e0d6bc]"
+                  placeholder={isProvider ? "Add amendment (original note stays immutable)" : "Only the assigned provider may amend"}
+                  disabled={!isProvider}
+                  className="bg-[#f6f1e6] border-[#e0d6bc] disabled:opacity-60"
+                  data-testid={`amend-input-${n.id}`}
                 />
                 <Button
                   onClick={() => addAmendment(n.id)}
-                  disabled={!amending[n.id]}
-                  className="btn-lift rounded-full bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6]"
+                  disabled={!isProvider || !amending[n.id]}
+                  title={isProvider ? "" : "Only the assigned provider may amend"}
+                  className="btn-lift rounded-full bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6] disabled:opacity-40 disabled:cursor-not-allowed"
+                  data-testid={`amend-btn-${n.id}`}
                 >
                   Amend
                 </Button>

@@ -40,7 +40,7 @@ assert_valid_secret()
 get_jwt_issuer()
 get_jwt_audience()
 
-WORKFORCE_ROLES = {"admin", "practitioner", "staff", "front_desk", "frontdesk", "auditor"}
+WORKFORCE_ROLES = {"admin", "practitioner", "staff", "front_desk", "frontdesk", "medical_assistant", "auditor"}
 
 
 # --------------------------------------------------------------------------- #

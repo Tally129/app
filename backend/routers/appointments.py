@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import Depends, HTTPException, Query, Request
 
 from audit import get_client_ip, log_audit
+from delegations import has_active_delegation
 from deps import (
     _resolve_self_client, _strip_id, api, db, get_current_user, require_roles,
 )
@@ -466,13 +467,28 @@ async def list_plans(client_id: Optional[str] = None, user=Depends(get_current_u
 
 @api.post("/treatment-plans", response_model=PlanOut)
 async def create_plan(payload: PlanIn, request: Request,
-                      user=Depends(require_roles("practitioner", "admin"))):
+                      user=Depends(require_roles("practitioner", "admin", "medical_assistant"))):
     c = await db.clients.find_one({"id": payload.client_id})
     if not c:
         raise HTTPException(status_code=404, detail="Client not found")
+    authorizing_provider_id = None
+    if user["role"] != "practitioner":
+        deleg = await has_active_delegation(user, payload.client_id)
+        if not deleg:
+            raise HTTPException(status_code=403, detail={
+                "code": "delegation_required",
+                "message": "Provider authorization is required to draft a treatment plan.",
+            })
+        authorizing_provider_id = deleg.get("provider_id")
     doc = payload.dict()
     doc["id"] = new_id()
-    doc["practitioner_id"] = user["id"]
+    if user["role"] == "practitioner":
+        doc["practitioner_id"] = user["id"]
+    else:
+        doc["practitioner_id"] = authorizing_provider_id
+        doc["drafted_by_id"] = user["id"]
+        doc["drafted_by_name"] = user.get("full_name", "")
+        doc["drafted_by_role"] = user.get("role")
     doc["created_at"] = datetime.now(timezone.utc)
     doc["updated_at"] = doc["created_at"]
     doc["lifecycle_status"] = "draft"
@@ -483,24 +499,41 @@ async def create_plan(payload: PlanIn, request: Request,
     await db.treatment_plans.insert_one(doc)
     await log_audit(db, user["id"], user["email"], "plan.create",
                     resource_type="plan", resource_id=doc["id"],
-                    metadata={"client_id": payload.client_id},
+                    metadata={"client_id": payload.client_id,
+                              "authorizing_provider_id": authorizing_provider_id,
+                              "actor_role": user.get("role")},
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
     return await _hydrate_plan(doc, user)
 
 
 @api.put("/treatment-plans/{plan_id}", response_model=PlanOut)
 async def update_plan(plan_id: str, payload: PlanIn, request: Request,
-                      user=Depends(require_roles("practitioner", "admin"))):
+                      user=Depends(require_roles("practitioner", "admin", "medical_assistant"))):
     from clinical_lock import refuse_edit_if_finalized
     p = await db.treatment_plans.find_one({"id": plan_id})
     if not p:
         raise HTTPException(status_code=404, detail="Plan not found")
     refuse_edit_if_finalized(p, status_field="lifecycle_status")
+    authorizing_provider_id = None
+    if user["role"] == "practitioner":
+        if p.get("practitioner_id") and p.get("practitioner_id") != user["id"]:
+            raise HTTPException(status_code=403, detail="Only the assigned provider may edit this draft")
+    else:
+        deleg = await has_active_delegation(user, p.get("client_id"),
+                                            provider_id=p.get("practitioner_id"))
+        if not deleg:
+            raise HTTPException(status_code=403, detail={
+                "code": "delegation_required",
+                "message": "Provider authorization is required to edit this draft.",
+            })
+        authorizing_provider_id = deleg.get("provider_id")
     updates = payload.dict()
     updates["updated_at"] = datetime.now(timezone.utc)
     await db.treatment_plans.update_one({"id": plan_id}, {"$set": updates})
     await log_audit(db, user["id"], user["email"], "plan.update",
                     resource_type="plan", resource_id=plan_id,
+                    metadata={"authorizing_provider_id": authorizing_provider_id,
+                              "actor_role": user.get("role")},
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
     p = await db.treatment_plans.find_one({"id": plan_id})
     return await _hydrate_plan(p, user)
@@ -508,7 +541,7 @@ async def update_plan(plan_id: str, payload: PlanIn, request: Request,
 
 @api.post("/treatment-plans/{plan_id}/finalize", response_model=PlanOut)
 async def finalize_plan(plan_id: str, request: Request,
-                        user=Depends(require_roles("practitioner", "admin"))):
+                        user=Depends(require_roles("practitioner"))):
     from clinical_lock import finalize_document
     doc = await finalize_document(
         db, "treatment_plans", plan_id, user,
@@ -522,7 +555,7 @@ async def finalize_plan(plan_id: str, request: Request,
 
 @api.post("/treatment-plans/{plan_id}/amend", response_model=PlanOut)
 async def amend_plan(plan_id: str, payload: dict, request: Request,
-                     user=Depends(require_roles("practitioner", "admin"))):
+                     user=Depends(require_roles("practitioner"))):
     from clinical_lock import amend_document
     doc = await amend_document(
         db, "treatment_plans", plan_id, user,

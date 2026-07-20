@@ -53,8 +53,13 @@ class P:
     NOTE_LIST_ASSIGNED = "note:list_assigned"
     NOTE_LIST_SELF = "note:list_self"
     NOTE_CREATE = "note:create"
+    NOTE_EDIT_DRAFT_DELEGATED = "note:edit_draft_delegated"
     NOTE_AMEND = "note:amend"
     NOTE_FINALIZE = "note:finalize"
+
+    # Clinical documentation delegation (grant by provider)
+    DELEGATION_GRANT = "delegation:grant"
+    DELEGATION_RECEIVE = "delegation:receive"
 
     # Files / file vault
     FILE_UPLOAD_ANY = "file:upload_any"
@@ -95,10 +100,12 @@ ROLE_PERMISSIONS: dict[str, Set[str]] = {
     # Practitioners — assigned clients + clinical write.
     "practitioner": {
         P.CLIENT_LIST, P.CLIENT_READ_ASSIGNED, P.CLIENT_WRITE,
-        P.NOTE_LIST_ASSIGNED, P.NOTE_CREATE, P.NOTE_AMEND, P.NOTE_FINALIZE,
+        P.NOTE_LIST_ASSIGNED, P.NOTE_CREATE, P.NOTE_EDIT_DRAFT_DELEGATED,
+        P.NOTE_AMEND, P.NOTE_FINALIZE,
         P.FILE_UPLOAD_ANY, P.FILE_DOWNLOAD_ANY,
         P.SESSION_LIST_OWN, P.SESSION_REVOKE_OWN,
         P.APPT_WRITE,
+        P.DELEGATION_GRANT,
     },
     # Staff — operational; PHI only where operations require it (client list, POS).
     "staff": {
@@ -106,6 +113,16 @@ ROLE_PERMISSIONS: dict[str, Set[str]] = {
         P.FILE_UPLOAD_ANY,
         P.SESSION_LIST_OWN, P.SESSION_REVOKE_OWN,
         P.APPT_WRITE, P.INVENTORY_WRITE, P.POS_WRITE,
+    },
+    # Medical Assistant — clinical read; edit only under provider delegation.
+    # Finalize / amend / prescribe stay provider-only.
+    "medical_assistant": {
+        P.CLIENT_LIST, P.CLIENT_READ_ANY,
+        P.NOTE_LIST_ANY, P.NOTE_EDIT_DRAFT_DELEGATED,
+        P.FILE_UPLOAD_ANY, P.FILE_DOWNLOAD_ANY,
+        P.SESSION_LIST_OWN, P.SESSION_REVOKE_OWN,
+        P.APPT_WRITE,
+        P.DELEGATION_RECEIVE,
     },
     # Legacy alias — same as staff.
     "front_desk": {
@@ -118,16 +135,18 @@ ROLE_PERMISSIONS: dict[str, Set[str]] = {
         P.SESSION_LIST_OWN, P.SESSION_REVOKE_OWN,
         P.APPT_WRITE, P.INVENTORY_WRITE, P.POS_WRITE,
     },
-    # Admin — full read + user mgmt + session mgmt + AUDIT + explicitly clinical.
+    # Admin — full read + user mgmt + session mgmt + AUDIT. Delegated draft
+    # editing on clinical records (finalize/amend/sign remain provider-only).
     "admin": {
         P.USER_LIST, P.USER_CREATE, P.USER_UPDATE_ROLE, P.USER_DEACTIVATE,
         P.SESSION_LIST_OWN, P.SESSION_LIST_ANY,
         P.SESSION_REVOKE_OWN, P.SESSION_REVOKE_ANY,
         P.CLIENT_LIST, P.CLIENT_READ_ANY, P.CLIENT_WRITE,
-        P.NOTE_LIST_ANY, P.NOTE_CREATE, P.NOTE_AMEND, P.NOTE_FINALIZE,
+        P.NOTE_LIST_ANY, P.NOTE_EDIT_DRAFT_DELEGATED,
         P.FILE_UPLOAD_ANY, P.FILE_DOWNLOAD_ANY, P.FILE_DELETE_ANY,
         P.AUDIT_READ, P.BREAKGLASS_ACTIVATE,
         P.APPT_WRITE, P.INVENTORY_WRITE, P.POS_WRITE,
+        P.DELEGATION_RECEIVE,
     },
     # Auditor — READ ONLY across all PHI. Break-glass READ passthrough.
     "auditor": {

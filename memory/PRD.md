@@ -204,3 +204,33 @@ See `/app/memory/test_credentials.md`. Primary: `tallyravello@gmail.com` / `TEST
 - `test_phase4.py::test_change_password_and_revert` has a pre-existing `from backend.auth_utils` import bug — needs rewrite
 
 _Last updated: Feb 27, 2026 (Final Security Closure Release — deps, malware, clinical, backup, startup validator)_
+
+
+## Feb 20, 2026 — Telehealth Waiting Room + Provider-Authorized Delegated Editing
+
+**Telehealth Waiting Room** (`routers/telehealth.py`, `pages/TelehealthVisit.jsx`, `pages/portal/TelehealthHub.jsx`)
+- New `waiting_room` state on appointments: `idle → requested → admitted / declined / ended`
+- Endpoints: `POST /appointments/{id}/telehealth/{request-join|admit|decline|end}`, `GET /appointments/{id}/telehealth/waiting-room`, `GET /telehealth/waiting-room/queue`
+- Client flow: tech check → **Request to Join** → waiting room panel with live A/V preview → auto-transitions to in-call on admit, or shows the decline reason
+- Provider flow: dedicated `provider-wait` screen with **Admit / Decline (reason) / End** controls; hub-level Waiting Room queue polling every 5s
+- WebSocket signaling now **gates** `webrtc-offer`, `webrtc-answer`, `ice-candidate`, `screen-share` until the appointment is `admitted`; blocked frames bounce a `waiting-room` state message back to the sender
+- Decline requires a 3-240 char reason, shown to patient + persisted in audit log (`telehealth.waiting_room_decline`, severity=high)
+
+**Provider-Authorized Delegated Editing** (`permissions.py`, `delegations.py`, `routers/delegations.py`, `routers/clients.py`, `routers/appointments.py`)
+- New role **`medical_assistant`** added to `Role` literal and `WORKFORCE_ROLES`; seeded test account `ma@natmedsol.local / MedAssist!2345`
+- New collection `clinical_delegations` — provider grants a scoped (client-specific or blanket) time-limited (15 min – 7 days) delegation to an admin or medical_assistant
+- Endpoints: `POST/GET /delegations`, `DELETE /delegations/{id}`, `GET /delegations/effective?client_id=…`
+- Backend enforcement:
+  - Notes / treatment plans: `create` + `update` accept `practitioner`, `admin`, `medical_assistant` — non-provider callers must have an active delegation for the client, else 403 `delegation_required`
+  - `finalize` / `amend` on notes and plans are now **practitioner-only** (admin permanently blocked from signing)
+  - Every delegated edit logs `authorizing_provider_id` + `actor_role` in audit metadata
+- Frontend `AuthorizationBadge` (`components/AuthorizationBadge.jsx`) surfaces one of:
+  - `Read Only — Provider Authorization Required` · `Draft Editing Authorized` · `Awaiting Provider Review` · `Finalized`
+- `PatientChart.jsx` shows the badge above SOAP-notes tab; the "New note" button is disabled unless the viewer can edit; the amend input is provider-only
+- Frontend `permissions.js` mirror updated (admin loses `note:create|amend|finalize`, gains `note:edit_draft_delegated`; adds `medical_assistant`)
+
+**Tests** — `backend/tests/test_waiting_room_and_delegation.py` (10/10 passing):
+- 7 waiting-room assertions: idle default, admit-when-empty rejected, request-join records `requested`, provider queue lists appt, decline requires reason, admit sets `admitted`, decline reason stored + audited
+- 3 delegation assertions: MA without delegation 403s on note create, admin cannot finalize even own drafts, granted MA can create + edit + audit trail carries authorizing_provider_id + revoke returns MA to read-only
+
+_Last updated: Feb 20, 2026 (Telehealth Waiting Room + Delegated Clinical Editing)_

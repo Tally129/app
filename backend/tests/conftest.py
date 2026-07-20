@@ -30,6 +30,7 @@ SEEDED_WORKFORCE = {
     "ravello@natmedsol.local",
     "frontdesk@natmedsol.local",
     "auditor@natmedsol.local",
+    "ma@natmedsol.local",
 }
 # 32-char base32 — deterministic so tests can compute the TOTP.
 FIXTURE_TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"

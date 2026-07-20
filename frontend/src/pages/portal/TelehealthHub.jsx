@@ -13,7 +13,7 @@ import { useToast } from "../../hooks/use-toast";
 import { getErrorMessage } from "../../lib/errors";
 import {
   Video, Calendar, Clock, History, Settings2, Loader2, Play, Mic, MicOff, VideoOff,
-  Lock, FileVideo, ExternalLink, Plus, Sparkles, Phone, Wifi,
+  Lock, FileVideo, ExternalLink, Plus, Sparkles, Phone, Wifi, DoorOpen, UserCheck, UserX,
 } from "lucide-react";
 
 /**
@@ -85,6 +85,8 @@ export default function TelehealthHub() {
         <StatCard label="Starting within 1h" value={appts.filter(inAnHourFromStart).length} icon={Clock} />
         <StatCard label="Upcoming total" value={upcoming.length} icon={Calendar} />
       </div>
+
+      {isProvider && <WaitingRoomQueue />}
 
       <Tabs defaultValue="upcoming">
         <TabsList className="bg-[#f1ead8]">
@@ -312,5 +314,135 @@ function InstantVisitDialog({ open, onOpenChange, onCreated }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ---------- Provider waiting-room queue ----------
+function WaitingRoomQueue() {
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const [queue, setQueue] = React.useState([]);
+  const [busyId, setBusyId] = React.useState("");
+  const [declineFor, setDeclineFor] = React.useState(null);
+  const [reason, setReason] = React.useState("");
+
+  const load = React.useCallback(async () => {
+    try {
+      const r = await api.get("/telehealth/waiting-room/queue");
+      setQueue(r.data || []);
+    } catch {
+      // 403 for staff/etc — silently ignore
+    }
+  }, []);
+
+  React.useEffect(() => {
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const admit = async (appt) => {
+    setBusyId(appt.appointment_id);
+    try {
+      await api.post(`/appointments/${appt.appointment_id}/telehealth/admit`);
+      toast({ title: `Admitted ${appt.client_name || "patient"}` });
+      navigate(`/portal/visit/${appt.appointment_id}`);
+    } catch (e) {
+      toast({ title: "Admit failed", description: getErrorMessage(e) || "" });
+    } finally {
+      setBusyId("");
+      load();
+    }
+  };
+
+  const submitDecline = async () => {
+    if (!declineFor || reason.trim().length < 3) return;
+    setBusyId(declineFor.appointment_id);
+    try {
+      await api.post(`/appointments/${declineFor.appointment_id}/telehealth/decline`,
+        { reason: reason.trim() });
+      toast({ title: "Session declined" });
+      setDeclineFor(null); setReason("");
+    } catch (e) {
+      toast({ title: "Decline failed", description: getErrorMessage(e) || "" });
+    } finally {
+      setBusyId("");
+      load();
+    }
+  };
+
+  if (queue.length === 0) return null;
+  return (
+    <div className="rounded-2xl border border-[#c19a4b] bg-[#fbf7ee] p-5 mb-8" data-testid="waiting-room-queue">
+      <div className="flex items-center gap-2 mb-3">
+        <DoorOpen size={16} className="text-[#c19a4b]" />
+        <div className="eyebrow text-[#8a6a3c]">Waiting room ({queue.length})</div>
+      </div>
+      <div className="space-y-3">
+        {queue.map((q) => (
+          <div key={q.appointment_id} className="flex flex-col md:flex-row md:items-center gap-3 border-t border-[#e7dfc9] pt-3 first:border-t-0 first:pt-0" data-testid={`waiting-row-${q.appointment_id}`}>
+            <div className="flex-1 min-w-0">
+              <div className="font-medium text-[#1f2a22]">{q.client_name || "Patient"}</div>
+              <div className="text-xs text-[#6a6a6a]">
+                Requested {q.waiting_room?.request_at ? new Date(q.waiting_room.request_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "just now"}
+                {q.visit_type && ` · ${q.visit_type}`}
+              </div>
+              {q.reason && <div className="text-xs text-[#8a6a3c] italic truncate">{q.reason}</div>}
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => admit(q)}
+                disabled={busyId === q.appointment_id}
+                className="rounded-full h-9 bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6]"
+                data-testid={`waiting-admit-${q.appointment_id}`}
+              >
+                <UserCheck size={13} className="mr-1" /> Admit
+              </Button>
+              <Button
+                onClick={() => { setDeclineFor(q); setReason(""); }}
+                variant="outline"
+                className="rounded-full h-9 border-[#7a2a2a] text-[#7a2a2a] hover:bg-[#7a2a2a] hover:text-[#f6f1e6]"
+                data-testid={`waiting-decline-${q.appointment_id}`}
+              >
+                <UserX size={13} className="mr-1" /> Decline
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <Dialog open={!!declineFor} onOpenChange={(v) => !v && setDeclineFor(null)}>
+        <DialogContent className="bg-[#fbf7ee] border-[#e7dfc9]" data-testid="waiting-decline-dialog">
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl">Decline this visit</DialogTitle>
+            <DialogDescription>
+              The reason you enter will be shown to {declineFor?.client_name || "the patient"} and recorded in the audit log.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Label>Decline reason</Label>
+            <Input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="bg-[#f6f1e6] border-[#e0d6bc]"
+              maxLength={240}
+              placeholder="Brief reason (min 3 chars)"
+              data-testid="waiting-decline-reason-input"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeclineFor(null)}>Cancel</Button>
+            <Button
+              onClick={submitDecline}
+              disabled={reason.trim().length < 3}
+              className="bg-[#7a2a2a] hover:bg-[#5f1f1f] text-[#f6f1e6] rounded-full"
+              data-testid="waiting-decline-confirm"
+            >
+              Confirm decline
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

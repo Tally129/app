@@ -5,7 +5,7 @@ import uuid
 from email_validator import validate_email, EmailNotValidError
 
 
-Role = Literal["admin", "practitioner", "staff", "client", "auditor"]
+Role = Literal["admin", "practitioner", "staff", "medical_assistant", "client", "auditor"]
 
 
 # Custom email validator that allows .local and .test domains for development/testing

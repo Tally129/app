@@ -12,6 +12,7 @@ import {
   Video, Mic, MicOff, VideoOff, PhoneOff, ArrowLeft,
   ShieldCheck, AlertCircle, Loader2, CheckCircle2, MonitorUp,
   MessageSquare, Send, Circle, Square, Sparkles, FileText, Save,
+  UserCheck, UserX, DoorOpen,
 } from "lucide-react";
 
 const FALLBACK_ICE = [
@@ -42,6 +43,10 @@ export default function TelehealthVisit() {
   const [soapSavedAt, setSoapSavedAt] = React.useState(null);
   const [soapOpen, setSoapOpen] = React.useState(false);
   const [aiBusy, setAiBusy] = React.useState(false);
+  const [waitingRoom, setWaitingRoom] = React.useState({ state: "idle" });
+  const [declineReason, setDeclineReason] = React.useState("");
+  const [showDeclineDialog, setShowDeclineDialog] = React.useState(false);
+  const [busyAction, setBusyAction] = React.useState("");
 
   const localVideoRef = React.useRef(null);
   const remoteVideoRef = React.useRef(null);
@@ -62,8 +67,20 @@ export default function TelehealthVisit() {
         const mine = (r.data || []).find((a) => a.id === id);
         if (!mine) { setErrMsg("Visit not found."); setStage("error"); return; }
         setAppt(mine);
-        if (!isProvider && !mine.consent_telehealth) setStage("consent");
-        else setStage("tech");
+        const wrState = (mine.waiting_room || {}).state;
+        if (isProvider) {
+          // Provider: skip consent; go to wait screen. If already admitted, will
+          // auto-start call via the waiting-room effect.
+          if (wrState === "admitted") setStage("tech");
+          else setStage("provider-wait");
+        } else {
+          if (!mine.consent_telehealth) setStage("consent");
+          else if (wrState === "declined") setStage("declined");
+          else if (wrState === "ended") setStage("ended");
+          else if (wrState === "requested") setStage("waiting");
+          else if (wrState === "admitted") setStage("tech");
+          else setStage("tech");
+        }
       } catch (e) {
         setErrMsg(getErrorMessage(e) || "Could not load visit."); setStage("error");
       }
@@ -71,9 +88,9 @@ export default function TelehealthVisit() {
     run();
   }, [id, isProvider]);
 
-  // 2) Camera/mic preview during tech stage
+  // 2) Camera/mic preview during tech / provider-wait stage
   React.useEffect(() => {
-    if (stage !== "tech" || localStream) return;
+    if (!["tech", "provider-wait"].includes(stage) || localStream) return;
     (async () => {
       try {
         const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -92,6 +109,105 @@ export default function TelehealthVisit() {
     return () => endCall(false);
     // eslint-disable-next-line
   }, []);
+
+  // ---------- Waiting room ----------
+  const fetchWaitingRoom = React.useCallback(async () => {
+    try {
+      const r = await api.get(`/appointments/${id}/telehealth/waiting-room`);
+      setWaitingRoom(r.data || { state: "idle" });
+      return r.data;
+    } catch {
+      return null;
+    }
+  }, [id]);
+
+  // Provider: poll waiting-room until admitted or ended; also fetch once on load.
+  React.useEffect(() => {
+    if (!id) return;
+    fetchWaitingRoom();
+  }, [id, fetchWaitingRoom]);
+
+  // Client polling while in the waiting stage; provider polling in wait-for-patient.
+  React.useEffect(() => {
+    if (!["waiting", "provider-wait"].includes(stage)) return;
+    const t = setInterval(fetchWaitingRoom, 3000);
+    return () => clearInterval(t);
+  }, [stage, fetchWaitingRoom]);
+
+  // React to state transitions.
+  React.useEffect(() => {
+    const s = waitingRoom?.state;
+    if (!s) return;
+    if (isProvider) {
+      if (s === "requested" && stage === "provider-wait") {
+        // patient in queue — provider can Admit
+      }
+      if (s === "admitted" && ["provider-wait", "tech"].includes(stage)) {
+        // proceed to call as provider
+        startCall();
+      }
+    } else {
+      if (s === "admitted" && stage === "waiting") {
+        startCall();
+      } else if (s === "declined" && stage === "waiting") {
+        setStage("declined");
+      } else if (s === "ended" && ["waiting", "in-call"].includes(stage)) {
+        setStage("ended");
+      }
+    }
+    // eslint-disable-next-line
+  }, [waitingRoom, stage]);
+
+  const requestJoin = async () => {
+    setBusyAction("request");
+    try {
+      const r = await api.post(`/appointments/${id}/telehealth/request-join`);
+      setWaitingRoom(r.data || { state: "requested" });
+      setStage("waiting");
+    } catch (e) {
+      toast({ title: "Could not request to join", description: getErrorMessage(e) || "" });
+    } finally { setBusyAction(""); }
+  };
+
+  const providerAdmit = async () => {
+    setBusyAction("admit");
+    try {
+      const r = await api.post(`/appointments/${id}/telehealth/admit`);
+      setWaitingRoom(r.data);
+      toast({ title: "Patient admitted" });
+    } catch (e) {
+      toast({ title: "Admit failed", description: getErrorMessage(e) || "" });
+    } finally { setBusyAction(""); }
+  };
+
+  const providerDecline = async () => {
+    if (declineReason.trim().length < 3) {
+      toast({ title: "Enter a decline reason (min 3 characters)" });
+      return;
+    }
+    setBusyAction("decline");
+    try {
+      const r = await api.post(`/appointments/${id}/telehealth/decline`, { reason: declineReason.trim() });
+      setWaitingRoom(r.data);
+      setShowDeclineDialog(false);
+      setDeclineReason("");
+      toast({ title: "Session declined" });
+      setStage("declined");
+    } catch (e) {
+      toast({ title: "Decline failed", description: getErrorMessage(e) || "" });
+    } finally { setBusyAction(""); }
+  };
+
+  const providerEnd = async () => {
+    setBusyAction("end");
+    try {
+      const r = await api.post(`/appointments/${id}/telehealth/end`);
+      setWaitingRoom(r.data);
+      endCall(true);
+    } catch (e) {
+      toast({ title: "End failed", description: getErrorMessage(e) || "" });
+    } finally { setBusyAction(""); }
+  };
 
   // ---------- consent ----------
   const submitConsent = async () => {
@@ -197,6 +313,12 @@ export default function TelehealthVisit() {
         try { await pc.addIceCandidate(data.candidate); } catch (e) { console.warn("ice add", e); }
       } else if (data.type === "chat") {
         setChatMsgs((m) => [...m, { from: data.from, body: data.body, ts: new Date().toISOString() }]);
+      } else if (data.type === "waiting-room") {
+        setWaitingRoom({
+          state: data.state, request_at: data.request_at,
+          admitted_at: data.admitted_at, declined_at: data.declined_at,
+          decline_reason: data.decline_reason, ended_at: data.ended_at,
+        });
       }
     };
 
@@ -431,11 +553,154 @@ export default function TelehealthVisit() {
               </div>
             </div>
             <div className="flex justify-end">
-              <Button onClick={startCall} disabled={!localStream}
-                className="rounded-full h-11 bg-[#c19a4b] hover:bg-[#a8853f] text-[#1f2a22]" data-testid="telehealth-join-btn">
-                <Video size={16} className="mr-2" /> Join visit
+              <Button
+                onClick={isProvider ? startCall : requestJoin}
+                disabled={!localStream || busyAction === "request"}
+                className="rounded-full h-11 bg-[#c19a4b] hover:bg-[#a8853f] text-[#1f2a22]"
+                data-testid="telehealth-join-btn"
+              >
+                {isProvider
+                  ? (<><Video size={16} className="mr-2" /> Join visit</>)
+                  : (busyAction === "request"
+                      ? (<><Loader2 size={16} className="mr-2 animate-spin" /> Requesting…</>)
+                      : (<><DoorOpen size={16} className="mr-2" /> Request to join</>))}
               </Button>
             </div>
+          </Panel>
+        )}
+
+        {stage === "waiting" && (
+          <Panel data-testid="telehealth-waiting-panel">
+            <div className="flex items-center gap-2 text-[#c19a4b] mb-4">
+              <DoorOpen size={20} /> <span className="eyebrow">Waiting room</span>
+            </div>
+            <h1 className="font-display text-3xl md:text-4xl mb-3">You're in the waiting room</h1>
+            <p className="text-[#c8d4cc] mb-6 leading-relaxed">
+              Your provider has been notified. They'll admit you as soon as they're ready.
+              Feel free to keep testing your camera and microphone below.
+            </p>
+            <div className="rounded-2xl bg-[#0e1a14] border border-[#2f4a3a] overflow-hidden aspect-video relative max-w-2xl mx-auto mb-4">
+              <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" data-testid="waiting-video" />
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
+                <button onClick={toggleMic} className={`p-3 rounded-full ${micOn ? "bg-[#2f4a3a]" : "bg-[#7a2a2a]"} text-[#f6f1e6]`} data-testid="waiting-mic-toggle">
+                  {micOn ? <Mic size={16} /> : <MicOff size={16} />}
+                </button>
+                <button onClick={toggleCam} className={`p-3 rounded-full ${camOn ? "bg-[#2f4a3a]" : "bg-[#7a2a2a]"} text-[#f6f1e6]`} data-testid="waiting-cam-toggle">
+                  {camOn ? <Video size={16} /> : <VideoOff size={16} />}
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center justify-center gap-2 text-[#8a9a8e] text-sm" data-testid="waiting-status">
+              <Loader2 className="animate-spin" size={14} /> Waiting for provider to admit you…
+            </div>
+            <div className="mt-6 text-center">
+              <Button variant="outline" onClick={() => endCall(true)} className="rounded-full border-[#7a2a2a] text-[#7a2a2a] hover:bg-[#7a2a2a] hover:text-[#f6f1e6]" data-testid="waiting-cancel">
+                Leave waiting room
+              </Button>
+            </div>
+          </Panel>
+        )}
+
+        {stage === "declined" && (
+          <Panel data-testid="telehealth-declined-panel">
+            <div className="flex items-center gap-3 text-[#e9b5b5] mb-3">
+              <UserX size={22} />
+              <div className="font-display text-3xl">Session declined</div>
+            </div>
+            <p className="text-[#c8d4cc] mb-3">Your provider was unable to admit you at this time.</p>
+            {waitingRoom?.decline_reason && (
+              <div className="rounded-lg border border-[#7a2a2a] bg-[#1a0e0e] p-4 text-sm text-[#f6f1e6] mb-4" data-testid="decline-reason">
+                <div className="eyebrow text-[#e9b5b5] mb-1">Reason from provider</div>
+                {waitingRoom.decline_reason}
+              </div>
+            )}
+            <Button onClick={() => navigate("/portal")} className="rounded-full bg-[#c19a4b] hover:bg-[#a8853f] text-[#1f2a22]">
+              Back to portal
+            </Button>
+          </Panel>
+        )}
+
+        {stage === "provider-wait" && isProvider && (
+          <Panel data-testid="telehealth-provider-wait">
+            <div className="flex items-center gap-2 text-[#c19a4b] mb-4">
+              <DoorOpen size={20} /> <span className="eyebrow">Provider waiting room</span>
+            </div>
+            <h1 className="font-display text-3xl mb-3">
+              {waitingRoom?.state === "requested"
+                ? `${appt?.client_name || "Patient"} is in the waiting room`
+                : "Waiting for patient to request to join"}
+            </h1>
+            <p className="text-[#c8d4cc] mb-5">
+              {waitingRoom?.state === "requested"
+                ? "Admit them to start the visit, or decline with a reason if the session cannot proceed."
+                : "The patient will appear here once they complete their device check and request to join."}
+            </p>
+            <div className="rounded-2xl bg-[#0e1a14] border border-[#2f4a3a] overflow-hidden aspect-video relative max-w-2xl mx-auto mb-6">
+              <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" data-testid="provider-preview-video" />
+              {!localStream && (
+                <div className="absolute inset-0 flex items-center justify-center text-[#8a9a8e]">
+                  <Loader2 className="animate-spin mr-2" size={18} /> Requesting camera & mic…
+                </div>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Button
+                onClick={providerAdmit}
+                disabled={waitingRoom?.state !== "requested" || busyAction === "admit"}
+                className="rounded-full h-11 bg-[#2f4a3a] hover:bg-[#263d30] text-[#f6f1e6] disabled:opacity-40"
+                data-testid="provider-admit-btn"
+              >
+                <UserCheck size={16} className="mr-2" />
+                {busyAction === "admit" ? "Admitting…" : "Admit patient"}
+              </Button>
+              <Button
+                onClick={() => setShowDeclineDialog(true)}
+                disabled={waitingRoom?.state !== "requested" || busyAction === "decline"}
+                variant="outline"
+                className="rounded-full h-11 border-[#7a2a2a] text-[#e9b5b5] hover:bg-[#7a2a2a] hover:text-[#f6f1e6] disabled:opacity-40"
+                data-testid="provider-decline-btn"
+              >
+                <UserX size={16} className="mr-2" /> Decline
+              </Button>
+              <Button
+                onClick={providerEnd}
+                variant="outline"
+                className="rounded-full h-11 border-[#8a9a8e] text-[#c8d4cc] hover:bg-[#2f4a3a]"
+                data-testid="provider-end-btn"
+              >
+                <PhoneOff size={16} className="mr-2" /> End session
+              </Button>
+            </div>
+            {showDeclineDialog && (
+              <div className="mt-5 rounded-2xl border border-[#7a2a2a] bg-[#1a0e0e] p-5" data-testid="decline-dialog">
+                <Label className="text-[#f6f1e6]">Decline reason (shown to patient)</Label>
+                <Input
+                  className="mt-2 bg-[#0e1a14] border-[#7a2a2a] text-[#f6f1e6]"
+                  value={declineReason}
+                  onChange={(e) => setDeclineReason(e.target.value)}
+                  placeholder="Brief reason (min 3 chars)"
+                  data-testid="decline-reason-input"
+                  maxLength={240}
+                />
+                <div className="flex gap-2 mt-3">
+                  <Button
+                    onClick={providerDecline}
+                    disabled={declineReason.trim().length < 3 || busyAction === "decline"}
+                    className="rounded-full bg-[#7a2a2a] hover:bg-[#5f1f1f] text-[#f6f1e6] disabled:opacity-40"
+                    data-testid="decline-confirm-btn"
+                  >
+                    Confirm decline
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => { setShowDeclineDialog(false); setDeclineReason(""); }}
+                    className="rounded-full"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
           </Panel>
         )}
 
@@ -478,7 +743,7 @@ export default function TelehealthVisit() {
                     {recording ? <Square size={16} fill="currentColor" /> : <Circle size={16} />}
                   </button>
                 )}
-                <button onClick={() => endCall(true)} className="p-3 rounded-full bg-[#7a2a2a]" title="Leave" data-testid="call-leave">
+                <button onClick={() => (isProvider ? providerEnd() : endCall(true))} className="p-3 rounded-full bg-[#7a2a2a]" title="Leave" data-testid="call-leave">
                   <PhoneOff size={16} />
                 </button>
               </div>

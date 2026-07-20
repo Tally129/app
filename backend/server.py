@@ -76,6 +76,7 @@ from routers import telehealth as _telehealth_routes  # noqa: F401
 from routers import forms_protocols as _forms_protocols_routes  # noqa: F401
 from routers import compliance as _compliance_routes  # noqa: F401
 from routers import breakglass as _breakglass_routes  # noqa: F401
+from routers import delegations as _delegations_routes  # noqa: F401
 
 # Startup config safety validation (fail-fast in HIPAA_MODE)
 from security_config import enforce_production_config
@@ -588,6 +589,17 @@ async def seed_demo():
             "is_active": True, "created_at": datetime.now(timezone.utc), "last_login_at": None,
         })
         logger.info("Seeded break-glass auditor user.")
+
+    # Idempotent: seed a Medical Assistant test account for delegated-editing QA.
+    if not await db.users.find_one({"email": "ma@natmedsol.local"}):
+        await db.users.insert_one({
+            "id": new_id(), "email": "ma@natmedsol.local",
+            "password_hash": hash_password("MedAssist!2345"),
+            "full_name": "Morgan Assistant", "phone": None,
+            "role": "medical_assistant", "mfa_enabled": False, "mfa_secret": None,
+            "is_active": True, "created_at": datetime.now(timezone.utc), "last_login_at": None,
+        })
+        logger.info("Seeded demo medical assistant user.")
 
     # Idempotent: ensure 3 built-in form templates exist (Phase 10)
     builtins = [

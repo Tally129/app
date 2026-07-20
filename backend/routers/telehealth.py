@@ -30,6 +30,42 @@ from models import TelehealthConsentIn, new_id
 from auth_utils import decode_token
 
 
+# ---------- Waiting room helpers ----------
+WAITING_ROOM_STATES = {"idle", "requested", "admitted", "declined", "ended"}
+
+
+def _serialize_waiting_room(wr: Optional[dict]) -> dict:
+    if not wr:
+        return {"state": "idle", "request_at": None, "admitted_at": None,
+                "declined_at": None, "decline_reason": None, "ended_at": None}
+    out = {
+        "state": wr.get("state", "idle"),
+        "request_at": wr.get("request_at"),
+        "admitted_at": wr.get("admitted_at"),
+        "declined_at": wr.get("declined_at"),
+        "decline_reason": wr.get("decline_reason"),
+        "ended_at": wr.get("ended_at"),
+    }
+    return out
+
+
+async def _appointment_or_404(appt_id: str) -> dict:
+    a = await db.appointments.find_one({"id": appt_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="Appointment not found")
+    return a
+
+
+async def _notify_visit_peers(appt_id: str, message: dict) -> None:
+    """Best-effort broadcast to any peers connected to the WS for this appt."""
+    room = _visit_rooms.get(appt_id) or {}
+    for ws in list(room.values()):
+        try:
+            await ws.send_json(message)
+        except Exception:
+            pass
+
+
 # ---------- Daily.co helpers (stubbed if DAILY_API_KEY unset) ----------
 # ---------- Telehealth helpers ----------
 DAILY_API_KEY = os.environ.get("DAILY_API_KEY", "")
@@ -205,6 +241,145 @@ async def toggle_recording(appt_id: str, body: dict, user=Depends(require_roles(
 # Active sessions: {appt_id: {role: WebSocket}}
 _visit_rooms = {}
 
+
+# ---------- Waiting room ----------
+@api.post("/appointments/{appt_id}/telehealth/request-join")
+async def request_join(appt_id: str, request: Request, user=Depends(get_current_user)):
+    """Client-initiated: enter the provider's waiting queue."""
+    a = await _appointment_or_404(appt_id)
+    if user["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only the client may request to join the waiting room")
+    self_client = await _resolve_self_client(user)
+    if not self_client or a["client_id"] != self_client["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not a.get("consent_telehealth"):
+        raise HTTPException(status_code=403, detail="Telehealth consent required")
+    now = datetime.now(timezone.utc)
+    wr = {
+        "state": "requested",
+        "request_at": now,
+        "requested_by": user["id"],
+        "admitted_at": None,
+        "admitted_by": None,
+        "declined_at": None,
+        "decline_reason": None,
+        "declined_by": None,
+        "ended_at": None,
+        "ended_by": None,
+    }
+    await db.appointments.update_one({"id": appt_id}, {"$set": {"waiting_room": wr}})
+    await log_audit(db, user["id"], user["email"], "telehealth.waiting_room_request",
+                    resource_type="appointment", resource_id=appt_id,
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    await _notify_visit_peers(appt_id, {"type": "waiting-room", **_serialize_waiting_room(wr)})
+    return _serialize_waiting_room(wr)
+
+
+@api.post("/appointments/{appt_id}/telehealth/admit")
+async def admit_visitor(appt_id: str, request: Request,
+                        user=Depends(require_roles("practitioner", "admin"))):
+    """Provider admits the waiting patient. Only after this do WebRTC offers relay."""
+    a = await _appointment_or_404(appt_id)
+    wr = a.get("waiting_room") or {}
+    if wr.get("state") not in ("requested", "admitted"):
+        raise HTTPException(status_code=409, detail={
+            "code": "no_pending_visitor",
+            "state": wr.get("state") or "idle",
+        })
+    now = datetime.now(timezone.utc)
+    new_wr = {**wr, "state": "admitted", "admitted_at": now, "admitted_by": user["id"]}
+    await db.appointments.update_one({"id": appt_id}, {"$set": {"waiting_room": new_wr}})
+    await log_audit(db, user["id"], user["email"], "telehealth.waiting_room_admit",
+                    resource_type="appointment", resource_id=appt_id,
+                    severity="info",
+                    metadata={"client_id": a.get("client_id")},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    await _notify_visit_peers(appt_id, {"type": "waiting-room", **_serialize_waiting_room(new_wr)})
+    return _serialize_waiting_room(new_wr)
+
+
+@api.post("/appointments/{appt_id}/telehealth/decline")
+async def decline_visitor(appt_id: str, payload: dict, request: Request,
+                          user=Depends(require_roles("practitioner", "admin"))):
+    """Provider declines the waiting patient with a short reason (shown to patient)."""
+    a = await _appointment_or_404(appt_id)
+    wr = a.get("waiting_room") or {}
+    reason = (payload or {}).get("reason", "")
+    reason = (reason or "").strip()
+    if len(reason) < 3 or len(reason) > 240:
+        raise HTTPException(status_code=400, detail={
+            "code": "decline_reason_required",
+            "message": "A short decline reason (3-240 chars) is required.",
+        })
+    if wr.get("state") not in ("requested", "admitted"):
+        raise HTTPException(status_code=409, detail={
+            "code": "no_pending_visitor",
+            "state": wr.get("state") or "idle",
+        })
+    now = datetime.now(timezone.utc)
+    new_wr = {**wr, "state": "declined", "declined_at": now,
+              "decline_reason": reason, "declined_by": user["id"]}
+    await db.appointments.update_one({"id": appt_id}, {"$set": {"waiting_room": new_wr}})
+    await log_audit(db, user["id"], user["email"], "telehealth.waiting_room_decline",
+                    resource_type="appointment", resource_id=appt_id,
+                    severity="high", outcome="success",
+                    metadata={"client_id": a.get("client_id"), "reason": reason[:200]},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    await _notify_visit_peers(appt_id, {"type": "waiting-room", **_serialize_waiting_room(new_wr)})
+    return _serialize_waiting_room(new_wr)
+
+
+@api.post("/appointments/{appt_id}/telehealth/end")
+async def end_visit(appt_id: str, request: Request,
+                    user=Depends(require_roles("practitioner", "admin"))):
+    """Provider ends the session (from waiting room or in-call)."""
+    a = await _appointment_or_404(appt_id)
+    wr = a.get("waiting_room") or {}
+    now = datetime.now(timezone.utc)
+    new_wr = {**wr, "state": "ended", "ended_at": now, "ended_by": user["id"]}
+    await db.appointments.update_one({"id": appt_id}, {"$set": {"waiting_room": new_wr}})
+    await log_audit(db, user["id"], user["email"], "telehealth.waiting_room_end",
+                    resource_type="appointment", resource_id=appt_id,
+                    metadata={"client_id": a.get("client_id")},
+                    ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
+    await _notify_visit_peers(appt_id, {"type": "waiting-room", **_serialize_waiting_room(new_wr)})
+    return _serialize_waiting_room(new_wr)
+
+
+@api.get("/appointments/{appt_id}/telehealth/waiting-room")
+async def waiting_room_status(appt_id: str, user=Depends(get_current_user)):
+    """Poll waiting-room state (used by client + provider UIs)."""
+    a = await _appointment_or_404(appt_id)
+    if user["role"] == "client":
+        self_client = await _resolve_self_client(user)
+        if not self_client or a["client_id"] != self_client["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    elif user["role"] not in ("practitioner", "admin", "staff", "medical_assistant"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return _serialize_waiting_room(a.get("waiting_room"))
+
+
+@api.get("/telehealth/waiting-room/queue")
+async def waiting_room_queue(user=Depends(require_roles("practitioner", "admin", "staff", "medical_assistant"))):
+    """Provider-facing queue: appointments with a client in the waiting room."""
+    rows = await db.appointments.find(
+        {"waiting_room.state": "requested"}
+    ).sort("waiting_room.request_at", 1).to_list(200)
+    out = []
+    for a in rows:
+        client = await db.clients.find_one({"id": a.get("client_id")}) or {}
+        out.append({
+            "appointment_id": a.get("id"),
+            "client_id": a.get("client_id"),
+            "client_name": client.get("full_name") or client.get("email"),
+            "start": a.get("start"),
+            "visit_type": a.get("visit_type"),
+            "reason": a.get("reason"),
+            "waiting_room": _serialize_waiting_room(a.get("waiting_room")),
+        })
+    return out
+
+
 @api.websocket("/ws/visit/{appt_id}")
 async def ws_visit(websocket: WebSocket, appt_id: str,
                     token: Optional[str] = Query(None),
@@ -238,7 +413,7 @@ async def ws_visit(websocket: WebSocket, appt_id: str,
         await websocket.close(code=4404)
         return
 
-    role = "provider" if u["role"] in ("practitioner", "admin", "staff") else "client"
+    role = "provider" if u["role"] in ("practitioner", "admin", "staff", "medical_assistant") else "client"
     if role == "client":
         sc = await _resolve_self_client(u)
         if not sc or appt.get("client_id") != sc["id"]:
@@ -264,6 +439,12 @@ async def ws_visit(websocket: WebSocket, appt_id: str,
             pass
     await websocket.send_json({"type": "joined", "role": role,
                                "peer_present": bool(room.get(other_role))})
+    # Bootstrap the waiting-room state on both sides so UIs stay in sync.
+    try:
+        await websocket.send_json({"type": "waiting-room",
+                                    **_serialize_waiting_room(appt.get("waiting_room"))})
+    except Exception:
+        pass
 
     # Audit join
     await log_audit(db, u["id"], u["email"], "telehealth.ws_join",
@@ -274,9 +455,27 @@ async def ws_visit(websocket: WebSocket, appt_id: str,
         while True:
             data = await websocket.receive_json()
             t = data.get("type")
-            # Messages we relay to the other peer: webrtc-offer, webrtc-answer, ice-candidate, chat
-            if t in ("webrtc-offer", "webrtc-answer", "ice-candidate", "chat",
-                     "media-state", "screen-share"):
+            # WebRTC signaling is BLOCKED until the provider admits the client.
+            if t in ("webrtc-offer", "webrtc-answer", "ice-candidate", "screen-share"):
+                fresh = await db.appointments.find_one({"id": appt_id})
+                wr_state = ((fresh or {}).get("waiting_room") or {}).get("state")
+                if wr_state != "admitted":
+                    try:
+                        await websocket.send_json({
+                            "type": "waiting-room",
+                            **_serialize_waiting_room((fresh or {}).get("waiting_room")),
+                            "blocked": t,
+                        })
+                    except Exception:
+                        pass
+                    continue
+                peer_ws = room.get(other_role)
+                if peer_ws:
+                    try:
+                        await peer_ws.send_json({**data, "from": role})
+                    except Exception:
+                        pass
+            elif t in ("chat", "media-state"):
                 peer_ws = room.get(other_role)
                 if peer_ws:
                     try:

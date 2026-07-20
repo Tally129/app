@@ -14,6 +14,7 @@ from fastapi import Depends, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.responses import StreamingResponse
 
 from audit import get_client_ip, log_audit
+from delegations import has_active_delegation
 from notifiers import push_to_user
 from deps import (
     _resolve_self_client, _strip_id, api, db, fs_bucket,
@@ -181,7 +182,7 @@ async def list_all_notes(request: Request,
                          practitioner_id: Optional[str] = None,
                          search: Optional[str] = None,
                          limit: int = 200,
-                         user=Depends(require_roles("admin", "practitioner", "staff"))):
+                         user=Depends(require_roles("admin", "practitioner", "staff", "medical_assistant"))):
     """Clinic-wide notes index for admin/practitioner/staff drill-down screens.
     Optional filters: practitioner_id (author), search (matches client_name)."""
     q: Dict[str, Any] = {}
@@ -209,14 +210,35 @@ async def list_all_notes(request: Request,
 
 @api.post("/notes", response_model=NoteOut)
 async def create_note(payload: NoteIn, request: Request,
-                      user=Depends(require_roles("practitioner", "admin"))):
+                      user=Depends(require_roles("practitioner", "admin", "medical_assistant"))):
     c = await db.clients.find_one({"id": payload.client_id})
     if not c:
         raise HTTPException(status_code=404, detail="Client not found")
+    # Delegated draft editing gate — admin / medical_assistant need an active delegation.
+    authorizing_provider_id = None
+    if user["role"] != "practitioner":
+        deleg = await has_active_delegation(user, payload.client_id)
+        if not deleg:
+            raise HTTPException(status_code=403, detail={
+                "code": "delegation_required",
+                "message": "Provider authorization is required to draft clinical documentation.",
+            })
+        authorizing_provider_id = deleg.get("provider_id")
     doc = payload.dict()
     doc["id"] = new_id()
-    doc["practitioner_id"] = user["id"]
-    doc["practitioner_name"] = user.get("full_name", "")
+    # Preserve provider ownership even when drafted by a delegate; if a delegate
+    # creates the note, the note is authored on behalf of the authorizing provider
+    # (they remain the responsible clinician for eventual finalization).
+    if user["role"] == "practitioner":
+        doc["practitioner_id"] = user["id"]
+        doc["practitioner_name"] = user.get("full_name", "")
+    else:
+        provider = await db.users.find_one({"id": authorizing_provider_id}) if authorizing_provider_id else None
+        doc["practitioner_id"] = authorizing_provider_id
+        doc["practitioner_name"] = (provider or {}).get("full_name", "")
+        doc["drafted_by_id"] = user["id"]
+        doc["drafted_by_name"] = user.get("full_name", "")
+        doc["drafted_by_role"] = user.get("role")
     doc["amendments"] = []
     doc["status"] = "draft"
     doc["created_at"] = datetime.now(timezone.utc)
@@ -232,14 +254,17 @@ async def create_note(payload: NoteIn, request: Request,
         doc["auto_attached_supplements"] = matched
     await log_audit(db, user["id"], user["email"], "note.create",
                     resource_type="note", resource_id=doc["id"],
-                    metadata={"client_id": payload.client_id, "auto_attached": [m["sheet_id"] for m in matched]},
+                    metadata={"client_id": payload.client_id,
+                              "auto_attached": [m["sheet_id"] for m in matched],
+                              "authorizing_provider_id": authorizing_provider_id,
+                              "actor_role": user.get("role")},
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
     return _strip_id(doc)
 
 
 @api.put("/notes/{note_id}", response_model=NoteOut)
 async def update_note(note_id: str, payload: NoteIn, request: Request,
-                      user=Depends(require_roles("practitioner", "admin"))):
+                      user=Depends(require_roles("practitioner", "admin", "medical_assistant"))):
     """Draft-only edit. Once finalized, editing is refused (must amend instead)."""
     note = await db.visit_notes.find_one({"id": note_id})
     if not note:
@@ -249,15 +274,29 @@ async def update_note(note_id: str, payload: NoteIn, request: Request,
             "code": "note_finalized",
             "message": "This note is finalized and cannot be edited. Use /amend to add an addendum.",
         })
-    if note.get("practitioner_id") != user["id"] and user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Only the author or an admin may edit a draft note")
+    # Delegated edit gate for non-provider actors.
+    authorizing_provider_id = None
+    if user["role"] == "practitioner":
+        if note.get("practitioner_id") != user["id"]:
+            raise HTTPException(status_code=403, detail="Only the assigned provider may edit this draft")
+    else:
+        deleg = await has_active_delegation(user, note.get("client_id"),
+                                            provider_id=note.get("practitioner_id"))
+        if not deleg:
+            raise HTTPException(status_code=403, detail={
+                "code": "delegation_required",
+                "message": "Provider authorization is required to edit this draft.",
+            })
+        authorizing_provider_id = deleg.get("provider_id")
     updates = payload.dict()
     updates.pop("client_id", None)  # locked to original
     updates["updated_at"] = datetime.now(timezone.utc)
     await db.visit_notes.update_one({"id": note_id}, {"$set": updates})
     await log_audit(db, user["id"], user["email"], "note.update_draft",
                     resource_type="note", resource_id=note_id,
-                    metadata={"fields": list(updates.keys())},
+                    metadata={"fields": list(updates.keys()),
+                              "authorizing_provider_id": authorizing_provider_id,
+                              "actor_role": user.get("role")},
                     ip=get_client_ip(request), user_agent=request.headers.get("user-agent"))
     note = await db.visit_notes.find_one({"id": note_id})
     return _strip_id(note)
@@ -265,16 +304,16 @@ async def update_note(note_id: str, payload: NoteIn, request: Request,
 
 @api.post("/notes/{note_id}/finalize", response_model=NoteOut)
 async def finalize_note(note_id: str, request: Request,
-                        user=Depends(require_roles("practitioner", "admin"))):
+                        user=Depends(require_roles("practitioner"))):
     """Transition a draft note to `finalized`. The finalized version is
-    immutable — future changes must go through `/amend`."""
+    immutable — future changes must go through `/amend`. Provider-only."""
     note = await db.visit_notes.find_one({"id": note_id})
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     if note.get("status") == "finalized":
         return _strip_id(note)
-    if note.get("practitioner_id") != user["id"] and user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Only the author or an admin may finalize")
+    if note.get("practitioner_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Only the assigned provider may finalize")
     now = datetime.now(timezone.utc)
     # Snapshot the current content as the immutable version 1.
     snapshot = {
@@ -439,7 +478,7 @@ async def remove_client_supplement_assignment(client_id: str, assignment_id: str
 
 @api.post("/notes/{note_id}/amend", response_model=NoteOut)
 async def amend_note(note_id: str, payload: AmendIn, request: Request,
-                     user=Depends(require_roles("practitioner", "admin"))):
+                     user=Depends(require_roles("practitioner"))):
     note = await db.visit_notes.find_one({"id": note_id})
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
