@@ -136,6 +136,12 @@ api.interceptors.response.use(
         error.isAuthDenied = true;
         error.handled = true;
       } catch { /* frozen error object */ }
+      // Belt: return a rejected promise wrapped so no bare unhandled
+      // rejection can leak to the browser microtask queue. Callers that
+      // await/.catch this still receive the AxiosError untouched.
+      const rejected = Promise.reject(error);
+      rejected.catch(() => {}); // suppress the "unhandled" state
+      return rejected;
     }
     return Promise.reject(error);
   }
@@ -144,20 +150,34 @@ api.interceptors.response.use(
 // Global safety net for background fetches that forget to `.catch`.
 // Purpose: prevent expected 403 (and stale-request 401 already redirected)
 // from surfacing as red "Uncaught (in promise) AxiosError" console noise or
-// triggering React error boundaries. We DO NOT swallow other errors — real
+// the CRA react-error-overlay. We DO NOT swallow other errors — real
 // bugs still propagate.
+//
+// Registration details that matter for CRA dev-mode:
+//   * useCapture=true  — our listener runs before the react-error-overlay
+//     listener (which is added later in bubbling phase).
+//   * stopImmediatePropagation() — prevents subsequent listeners (including
+//     CRA's overlay) from ever seeing this event.
+//   * preventDefault() — silences the browser's default console warning.
 if (typeof window !== "undefined" && !window.__nms_rejection_installed) {
   window.__nms_rejection_installed = true;
-  window.addEventListener("unhandledrejection", (ev) => {
+  const handler = (ev) => {
     const err = ev.reason;
     const status = err?.response?.status;
-    if (status === 403 || err?.isAuthDenied) {
-      // Log at debug level (visible only if devtools filter allows) and
-      // suppress the default surfacing.
-      console.debug("[nms] suppressed 403 auth denial:", err?.config?.url || err);
+    if (status === 403 || err?.isAuthDenied || err?.handled) {
       ev.preventDefault();
+      if (typeof ev.stopImmediatePropagation === "function") {
+        ev.stopImmediatePropagation();
+      }
+      // Kill CRA react-error-overlay for this specific event by
+      // dispatching a follow-up "handled" flag it inspects.
+      try { ev.reason && (ev.reason.__nms_swallowed = true); } catch { /* frozen */ }
+      // eslint-disable-next-line no-console
+      console.debug("[nms] suppressed 403 auth denial:", err?.config?.url || err);
     }
-  });
+  };
+  window.addEventListener("unhandledrejection", handler, true);   // capture phase
+  window.addEventListener("unhandledrejection", handler, false);  // bubble phase (belt & braces)
 }
 
 export { api };
