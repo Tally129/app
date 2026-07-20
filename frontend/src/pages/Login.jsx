@@ -7,7 +7,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { ArrowLeft } from "lucide-react";
 import { useToast } from "../hooks/use-toast";
-import { useAuth, roleHome } from "../lib/auth";
+import { useAuth, roleHome, isWorkforceRole } from "../lib/auth";
 import { getErrorMessage } from "../lib/errors";
 
 export default function Login() {
@@ -39,8 +39,18 @@ export default function Login() {
         toast({ title: "Two-factor required", description: "Enter the 6-digit code from your authenticator app." });
         return;
       }
-      const dest = location.state?.from || roleHome(res.user.role);
       try { localStorage.setItem("nms_last_login_email", form.email); } catch {}
+      // Workforce user landed on the patient login by mistake — bounce them
+      // to the staff/provider portal with a friendly note.
+      if (isWorkforceRole(res.user.role)) {
+        toast({
+          title: "Welcome back",
+          description: "Redirecting you to the staff portal.",
+        });
+        navigate(roleHome(res.user.role), { replace: true });
+        return;
+      }
+      const dest = location.state?.from || roleHome(res.user.role);
       toast({ title: "Welcome back" });
       navigate(dest, { replace: true });
     } catch (err) {
@@ -88,6 +98,11 @@ export default function Login() {
         const res = await loginWithGoogleSession(m[1]);
         // clear the fragment
         window.history.replaceState({}, document.title, window.location.pathname);
+        if (isWorkforceRole(res.user.role)) {
+          toast({ title: "Welcome", description: "Redirecting you to the staff portal." });
+          navigate(roleHome(res.user.role), { replace: true });
+          return;
+        }
         const dest = roleHome(res.user.role);
         toast({ title: "Welcome", description: res.user.email });
         navigate(dest, { replace: true });
@@ -112,8 +127,8 @@ export default function Login() {
 
       <section className="max-w-md mx-auto px-6 text-center mt-6">
         <div className="flex justify-center"><Logo size={86} /></div>
-        <h1 className="font-display text-[40px] text-[#1f2a22] mt-8">Sign in</h1>
-        <p className="text-[#5a5a5a] mt-2 text-sm">Clients, practitioners, staff, and admins all sign in here.</p>
+        <h1 className="font-display text-[40px] text-[#1f2a22] mt-8">Patient portal sign in</h1>
+        <p className="text-[#5a5a5a] mt-2 text-sm">Access your appointments, chart, labs, and secure messages.</p>
       </section>
 
       <section className="max-w-md mx-auto px-6 mt-8">
@@ -165,10 +180,13 @@ export default function Login() {
 
           <p className="text-center text-sm text-[#6a6a6a] mt-5">
             New here?{" "}
-            <Link to="/signup" className="text-[#2f4a3a] underline underline-offset-2">Create an account</Link>
+            <Link to="/signup" className="text-[#2f4a3a] underline underline-offset-2" data-testid="signup-link">Create an account</Link>
           </p>
-          <p className="text-center text-[11px] text-[#8a8a8a] mt-2">
-            Staff: sign in with your issued credentials. Demo: admin@natmedsol.local / Admin!2345
+          <p className="text-center text-[11px] text-[#8a8a8a] mt-3">
+            Staff & providers:{" "}
+            <Link to="/staff-login" className="text-[#2f4a3a] underline underline-offset-2" data-testid="staff-login-link">
+              sign in here
+            </Link>
           </p>
         </div>
       </section>

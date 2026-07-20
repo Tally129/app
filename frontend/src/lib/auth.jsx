@@ -142,12 +142,36 @@ export function useAuth() { return useContext(AuthContext); }
 
 export function roleHome(role) {
   switch (role) {
-    case "admin":       return "/portal/admin";
-    case "practitioner": return "/portal/practitioner";
+    case "admin":            return "/portal/admin";
+    case "practitioner":     return "/portal/provider";
+    case "medical_assistant": return "/portal/staff";
     case "staff":
     case "front_desk":
-    case "frontdesk":   return "/portal/frontdesk";
-    case "auditor":     return "/portal/admin/audit";
-    default:            return "/portal";
+    case "frontdesk":        return "/portal/staff";
+    case "auditor":          return "/portal/admin/audit";
+    case "client":           return "/portal/patient";
+    default:                 return "/portal/patient";
   }
+}
+
+// Roles that must sign in through the staff/provider login page (dark
+// theme, /staff-login). Everything else — clients + fallback — belongs on the
+// patient login. Kept here (co-located with `roleHome`) so route guards and
+// the two login screens agree on which portal a user "belongs" to.
+export const WORKFORCE_ROLES = new Set([
+  "admin",
+  "practitioner",
+  "medical_assistant",
+  "staff",
+  "front_desk",
+  "frontdesk",
+  "auditor",
+]);
+
+export function isWorkforceRole(role) {
+  return WORKFORCE_ROLES.has(role);
+}
+
+export function loginPathForRole(role) {
+  return isWorkforceRole(role) ? "/staff-login" : "/login";
 }
