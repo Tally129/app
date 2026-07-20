@@ -127,21 +127,31 @@ api.interceptors.response.use(
         }
       }
     }
-    // Tag every 403 as an EXPECTED authorization denial. Callers who care
-    // handle it explicitly; anyone who forgets to `.catch` won't produce a
-    // scary red console error. The `handled` flag is consumed by our global
-    // unhandledrejection listener below.
+    // 403 is an EXPECTED authorization denial for background widget calls
+    // that mount for every user. We RESOLVE (not reject) with a sentinel
+    // response so:
+    //   • CRA's react-error-overlay never sees an uncaught promise rejection;
+    //   • callers using `await api.get(...)` still receive a response object;
+    //   • checks like `if (data) render()` naturally show an empty state;
+    //   • callers who explicitly need to detect 403 can inspect
+    //     `res.status === 403` or `res.__isAuthDenied`.
+    // Backend RBAC is untouched — the network 403 still happens; we just stop
+    // it from being a client-side crash source.
     if (status === 403) {
-      try {
-        error.isAuthDenied = true;
-        error.handled = true;
-      } catch { /* frozen error object */ }
-      // Belt: return a rejected promise wrapped so no bare unhandled
-      // rejection can leak to the browser microtask queue. Callers that
-      // await/.catch this still receive the AxiosError untouched.
-      const rejected = Promise.reject(error);
-      rejected.catch(() => {}); // suppress the "unhandled" state
-      return rejected;
+      // Log once per URL at debug so a real permission bug can be diagnosed.
+      // eslint-disable-next-line no-console
+      console.debug("[nms] 403 auth denial resolved as empty:", error?.config?.url);
+      return {
+        data: null,
+        status: 403,
+        statusText: "Forbidden",
+        headers: error?.response?.headers || {},
+        config: error?.config,
+        __isAuthDenied: true,
+        __errorMessage: (typeof error?.response?.data?.detail === "string"
+          ? error.response.data.detail
+          : error?.response?.data?.detail?.message) || "You don't have access.",
+      };
     }
     return Promise.reject(error);
   }
